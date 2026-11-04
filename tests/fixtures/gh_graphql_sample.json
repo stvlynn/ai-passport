@@ -1,0 +1,12 @@
+{"data":{"organization":{"repositories":{"totalCount":3,"nodes":[
+ {"name":"Nebula","isPrivate":false,"stargazerCount":120,"pushedAt":"2026-11-03T13:53:54Z","issues":{"totalCount":4},"pullRequests":{"totalCount":2},"stargazers":{"edges":[{"starredAt":"2026-11-04T05:48:45Z","node":{"login":"stargazer-a"}}]}},
+ {"name":"Comet","isPrivate":true,"stargazerCount":0,"pushedAt":"2026-10-31T08:05:58Z","issues":{"totalCount":1},"pullRequests":{"totalCount":0},"stargazers":{"edges":[]}},
+ {"name":"Orbit","isPrivate":false,"stargazerCount":7,"pushedAt":null,"issues":{"totalCount":0},"pullRequests":{"totalCount":1},"stargazers":{"edges":[{"starredAt":"2026-11-01T00:00:00Z","node":{"login":"stargazer-b"}}]}}
+]}},
+"search":{"nodes":[
+ {"__typename":"PullRequest","number":42,"title":"修复 同步\n问题","state":"MERGED","merged":true,"updatedAt":"2026-11-04T06:00:00Z","author":{"login":"dev-a"},"repository":{"name":"Nebula"}},
+ {"__typename":"Issue","number":7,"title":"Crash on start","state":"OPEN","updatedAt":"2026-11-03T06:00:00Z","author":null,"repository":{"name":"Orbit"}},
+ {"__typename":"PullRequest","number":8,"title":"Draft","state":"CLOSED","merged":false,"updatedAt":"2026-11-02T06:00:00Z","author":{"login":"dev-b"},"repository":{"name":"Orbit"}},
+ {"__typename":"Discussion","number":1,"title":"skip me","updatedAt":"2026-11-04T07:00:00Z"}
+]},
+"rateLimit":{"remaining":4987,"resetAt":"2026-11-04T07:00:00Z"}}}

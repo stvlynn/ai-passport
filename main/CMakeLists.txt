@@ -1,16 +1,29 @@
+# Astra Monitor 应用源文件。基线硬件测试演示(main.c、demo_*.c、ui_pixel*)不参与构建,
+# 仅为宿主测试与参考保留;见 app_main.c 顶部说明。
 idf_component_register(
-    SRCS "main.c"
-         "demo_navigation.c"
-         "ui_pixel.c"
-         "ui_pixel_math.c"
-         "demo_display.c"
-         "demo_button.c"
-         "demo_audio.c"
-         "demo_battery.c"
-         "demo_radio.c"
-         "demo_wifi.c"
-         "demo_ble.c"
-         "demo_low_power.c"
+    SRCS "app_main.c"
+         "app_nav.c"
+         "app_net.c"
+         "app_portal.c"
+         "portal_proto.c"
+         "app_settings.c"
+         "app_audio.c"
+         "app_console.c"
+         "gh_model.c"
+         "lynn_anim.c"
+         "gh_parse.c"
+         "gh_fetch.c"
+         "sound_synth.c"
+         "ui.c"
+         "ui_assets.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp bt esp_event esp_hw_support esp_netif esp_timer esp_wifi nvs_flash
+    REQUIRES bsp esp_driver_usb_serial_jtag esp_event esp_http_client esp_http_server
+             esp_netif esp_timer esp_wifi json mbedtls nvs_flash
+)
+
+# 像素字体由 tools/gen_app_fonts.py 生成,源文件放在仓库根 assets/fonts/。
+target_sources(${COMPONENT_LIB} PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../assets/fonts/ui_font_12.c"
+    "${CMAKE_CURRENT_LIST_DIR}/../assets/fonts/ui_font_24.c"
+    "${CMAKE_CURRENT_LIST_DIR}/../assets/fonts/ui_font_36.c"
 )

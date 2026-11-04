@@ -68,6 +68,31 @@ run_static_checks() {
             -o "${test_dir}/test_demo_${demo}_runtime"
         "${test_dir}/test_demo_${demo}_runtime"
     done
+    # Astra Monitor 应用逻辑:数据模型、GraphQL 解析(用 ESP-IDF 自带 cJSON)、导航、音效合成、配网协议。
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_gh_model.c main/gh_model.c -o "${test_dir}/test_gh_model"
+    "${test_dir}/test_gh_model"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_app_nav.c main/app_nav.c -o "${test_dir}/test_app_nav"
+    "${test_dir}/test_app_nav"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_sound_synth.c main/sound_synth.c -o "${test_dir}/test_sound_synth"
+    "${test_dir}/test_sound_synth"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_portal_proto.c main/portal_proto.c -o "${test_dir}/test_portal_proto"
+    "${test_dir}/test_portal_proto"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_lynn_anim.c main/lynn_anim.c -o "${test_dir}/test_lynn_anim"
+    "${test_dir}/test_lynn_anim"
+    cjson_dir="${IDF_PATH:-}/components/json/cJSON"
+    if [[ -f "${cjson_dir}/cJSON.c" ]]; then
+        "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain -I"${cjson_dir}" \
+            tests/test_gh_parse.c main/gh_parse.c main/gh_model.c "${cjson_dir}/cJSON.c" \
+            -o "${test_dir}/test_gh_parse"
+        "${test_dir}/test_gh_parse" tests/fixtures/gh_graphql_sample.json
+    else
+        echo "SKIP test_gh_parse: IDF_PATH not set (needs ESP-IDF's bundled cJSON)" >&2
+    fi
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_battery_profile.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_deep_sleep_contract.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_key_wake_contract.py

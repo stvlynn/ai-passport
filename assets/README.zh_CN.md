@@ -15,6 +15,13 @@
 - 添加字库前评估 Flash 与内部 RAM 影响；ESP32-C3 无 PSRAM。
 - 不提交许可不允许分发的字库。
 
+| 文件 | 内容 | 来源与接入 |
+| --- | --- | --- |
+| [`fonts/ui_font_12.c`](fonts/ui_font_12.c) | 12 px、1 bpp：可打印 ASCII、GB2312 一级汉字、中文标点，以及 Astra Monitor 字符串字面量中的全部非 ASCII 字符 | 由 `tools/gen_app_fonts.py` 用 lv_font_conv 1.5.2 从 Fusion Pixel Font 12px proportional `zh_hans`（2026.10.25 版，SIL OFL 1.1，[许可](fonts/OFL-fusion-pixel-font.txt)）生成；由 `main/CMakeLists.txt` 编译。 |
+| [`fonts/ui_font_24.c`](fonts/ui_font_24.c) | 24 px（2 倍栅格）：ASCII 与 `main/ui.c` 用到的非 ASCII 字符 | 同上。 |
+| [`fonts/ui_font_36.c`](fonts/ui_font_36.c) | 36 px（3 倍栅格）：星标计数用的数字与 `+-.,k` | 同上。 |
+| [`fonts/ui_font_inventory.txt`](fonts/ui_font_inventory.txt) | 应用字符串用到的非 ASCII 字符清单 | 由生成脚本写出；改动文案后请复查。 |
+
 ## 图片（images）
 
 可复用的源图与生成的显示资产放在 `images/`。
@@ -25,6 +32,7 @@
 | [`images/readme-hardware-specs.png`](images/readme-hardware-specs.png) | 2172 × 724，PNG RGBA | 保留为可选技术参考图，不再用于首页主视觉。于 2026-09-17 使用内置图像生成工具为本仓库生成；已根据文档中的硬件能力契约核对图中的六项标签与参数。 |
 | [`images/logo-wordmark.png`](images/logo-wordmark.png) | 1648 × 336，PNG RGBA | 从仓库原始 `images/logo.png` 中精确裁切并去除背景的黑色字标；用于中英文项目 README 的浅色主题。 |
 | [`images/logo-wordmark-dark.png`](images/logo-wordmark-dark.png) | 1648 × 336，PNG RGBA | 提取字标的白色版本；README 使用 `<picture>` 在 GitHub 深色主题下显示。 |
+| [`images/lynn/`](images/lynn/) | 47 张 64 × 64 PNG RGBA（硬边透明，每张不超过 17 色） | 角色 Lynn（[lynn.stv.pm](https://lynn.stv.pm)）的像素精灵：待机、眨眼、开心、开心跳起、惊讶、审阅、睡觉、困惑，以及它们的补充帧（左右张望、开心第二帧、把惊讶帧上移 2 像素做成的惊跳帧、审阅/困惑/睡觉各两帧），和看书（4 帧）、敲电脑（4 帧）、打瞌睡（4 帧）、招手（3 帧）、喝茶（3 帧）、伸懒腰（3 帧）、听音乐（3 帧）、礼花（3 帧）、放大镜（2 帧）的动画帧。2026-11-04 用 codex CLI 图像工具依据角色所有者提供的设定图与表情贴纸生成，每个中间帧都以对应关键帧为参考绘制；再降采样到 64 像素栅格，并量化到关键帧的调色板。`tools/gen_app_assets.py` 将其最近邻放大 2 倍，转换为 `main/ui_assets.c` 中的 RGB565A8 数组。仅限所有者自己的项目使用。 |
 
 - 使用描述性命名，并记录尺寸、像素格式、转换步骤与目标路径。
 - 优先采用适合 240 × 320 RGB565 显示的格式，并纳入 Flash 与内部 RAM 考量。

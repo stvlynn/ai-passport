@@ -1,0 +1,44 @@
+menu "Astra Monitor"
+
+    config ASTRA_GH_ORG
+        string "GitHub organization"
+        default "AstraFoundry"
+        help
+            Organization login whose repositories, issues, pull requests and
+            stars are shown on the device.
+
+    config ASTRA_GH_TOKEN
+        string "Fallback GitHub token"
+        default ""
+        help
+            Optional build-time token. Prefer provisioning the token over the
+            USB serial console (`token <value>`), which stores it in NVS and
+            keeps it out of firmware images. Never commit a token in
+            sdkconfig.defaults.
+
+    config ASTRA_REFRESH_SECONDS
+        int "Refresh interval (seconds)"
+        range 30 3600
+        default 120
+
+    config ASTRA_TZ
+        string "POSIX time zone"
+        default "CST-8"
+        help
+            Used for the clock and the "today" star counter.
+
+    config ASTRA_DIM_SECONDS
+        int "Dim the backlight at most after (seconds)"
+        range 0 3600
+        default 90
+
+    config ASTRA_OFF_SECONDS
+        int "Default screen-off time (seconds), 0 = never"
+        range 0 1800
+        default 600
+        help
+            Initial value of the Device page "screen off" setting. The setting
+            offers 1, 5, 10 and 30 minutes or never; the screen dims at half the
+            screen-off time, but no later than ASTRA_DIM_SECONDS.
+
+endmenu
