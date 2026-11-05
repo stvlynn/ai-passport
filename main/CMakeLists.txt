@@ -11,6 +11,8 @@ idf_component_register(
          "app_console.c"
          "gh_model.c"
          "lynn_anim.c"
+         "lynn_stage.c"
+         "lynn_stage_data.c"
          "gh_parse.c"
          "gh_fetch.c"
          "sound_synth.c"

@@ -11,6 +11,7 @@
 #include "gh_model.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum {
@@ -66,6 +67,14 @@ void ui_notify(const ui_model_t *m, const gh_feed_item_t *item, int32_t star_del
 
 // 操作反馈:顶部滑入一张只有文字的提示卡。warn=true 用红色图标,看板娘短暂困惑。
 void ui_message(const ui_model_t *m, bool warn, const char *head, const char *sub);
+
+// ---- Lynn 舞台页(动作同时是 agent 工具,见 docs/lynn-tools.json)----
+// 播放动作;id 为 NULL 时随机一个互动。line 非 NULL 时作为台词。返回 false 表示 id 不存在。
+bool ui_lynn_play(const char *id, const char *line);
+// 改台词(NULL 恢复默认)。
+void ui_lynn_say(const char *text);
+// 当前动作 id 与台词,写入 buf。
+void ui_lynn_status(char *buf, size_t cap);
 
 // 用户在总览页"戳"了看板娘:她会招手/跳起来,打瞌睡时会被惊醒。
 // 当前页没有看板娘时返回 false。

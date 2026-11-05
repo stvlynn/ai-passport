@@ -54,6 +54,7 @@ typedef enum {
     EV_NET,
     EV_CLAP,
     EV_CONSOLE,
+    EV_LYNN_SHOW,           // agent 让 Lynn 做了动作:切到 Lynn 页并点亮屏幕
 } ev_type_t;
 
 typedef struct {
@@ -382,14 +383,45 @@ static app_key_t map_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     return APP_KEY_OK;
 }
 
-// 总览页长按 上/下:戳一下 Lynn。息屏时先唤醒(唤醒那一下不算戳)。
+// Lynn 页:播放动作(id 为 NULL 时随机一个互动)。
+static void lynn_play(const char *id) {
+    if (!bsp_lvgl_lock(500)) return;
+    bool ok = ui_lynn_play(id, NULL);
+    bsp_lvgl_unlock();
+    if (ok) app_audio_play(SOUND_TICK);
+}
+
+// 串口 / agent 工具命令(在 console 任务中执行)。
+static bool on_lynn_cmd(const char *verb, const char *arg, const char *line, char *out, size_t cap) {
+    if (!bsp_lvgl_lock(500)) return false;
+    bool ok = true;
+    if (strcmp(verb, "play") == 0) {
+        ok = ui_lynn_play(arg, line);
+    } else if (strcmp(verb, "say") == 0) {
+        ui_lynn_say(arg);
+    } else if (strcmp(verb, "status") == 0) {
+        ui_lynn_status(out, cap);
+    } else {
+        ok = false;
+    }
+    bsp_lvgl_unlock();
+    if (ok && strcmp(verb, "status") != 0) post(EV_LYNN_SHOW, 0, 0);
+    return ok;
+}
+
+// 总览页 / Lynn 页长按 上/下:戳一下 Lynn。息屏时先唤醒(唤醒那一下不算戳)。
 static void poke_lynn(void) {
     if (app_nav_poke(&s_nav, now_ms())) {
         apply_backlight();
         ui_update(false);
         return;
     }
-    if (s_provisioning || s_nav.page != APP_PAGE_HOME) return;
+    if (s_provisioning) return;
+    if (s_nav.page == APP_PAGE_LYNN) {
+        lynn_play("pat");
+        return;
+    }
+    if (s_nav.page != APP_PAGE_HOME) return;
     refresh_model();
     if (!bsp_lvgl_lock(500)) return;
     bool poked = ui_poke(&s_model);
@@ -406,6 +438,13 @@ static void handle_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     if (s_provisioning) {
         app_nav_poke(&s_nav, now_ms());
         if (key == APP_KEY_OK_LONG) provisioning_exit();
+        return;
+    }
+    // Lynn 页:确定单击/双击 = 随机互动,确定长按 = 摸头(上/下 照常翻页)。
+    if (s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE &&
+        (key == APP_KEY_OK || key == APP_KEY_OK_DOUBLE || key == APP_KEY_OK_LONG)) {
+        app_nav_poke(&s_nav, now_ms());
+        lynn_play(key == APP_KEY_OK_LONG ? "pat" : NULL);
         return;
     }
     switch (app_nav_key(&s_nav, key, now_ms())) {
@@ -481,6 +520,16 @@ static void app_task(void *arg) {
                 ui_update(false);
                 break;
             }
+            case EV_LYNN_SHOW:
+                if (s_provisioning) break;
+                if (app_nav_poke(&s_nav, now_ms())) apply_backlight();
+                if (s_nav.page != APP_PAGE_LYNN) {
+                    s_nav.page = APP_PAGE_LYNN;
+                    ui_update(true);
+                } else {
+                    ui_update(false);           // 已在 Lynn 页:刷新一次,关屏后被暂停的舞台随之恢复
+                }
+                break;
             case EV_CLAP:
                 if (app_nav_poke(&s_nav, now_ms())) {
                     apply_backlight();
@@ -578,6 +627,7 @@ void app_main(void) {
         return;
     }
     if (bsp_button_init(on_key, NULL) != ESP_OK) ESP_LOGE(TAG, "按键初始化失败");
+    app_console_set_lynn(on_lynn_cmd);
     app_console_start(on_console);
     ESP_LOGI(TAG, "就绪:audio=%d 空闲堆 %u", audio_ok, (unsigned)esp_get_free_heap_size());
 }

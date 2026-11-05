@@ -1,0 +1,439 @@
+{
+  "version": 1,
+  "transport": {
+    "serial": "USB serial console, one command per line",
+    "commands": {
+      "lynn_play_action": "lynn play <action> [line]",
+      "lynn_say": "lynn say <text>",
+      "lynn_list_actions": "lynn list",
+      "lynn_status": "lynn status"
+    }
+  },
+  "tools": [
+    {
+      "name": "lynn_play_action",
+      "description": "Make Lynn, the pixel-art mascot on the device's Lynn page, perform an animated action. Interactions play once and return to idle; idle activities loop a few times. Optionally set the line shown in her speech card. read: Lynn reads a book, turning pages and smiling at a passage.; type: Lynn types on her laptop, glances up, and hits Enter with a flourish.; tea: Lynn sips tea and lets out a contented sigh.; music: Lynn listens to music on headphones, bobbing her head to the beat.; stretch: Lynn stretches her arms up, yawns, and relaxes.; doze: Lynn dozes off standing up, nodding, then wakes with a start.; water: Lynn waters a potted plant until it blooms, then wipes her brow.; sweep: Lynn sweeps the floor with a small broom.; paper_plane: Lynn throws a paper airplane and watches it fly away.; doodle: Lynn doodles in a sketchbook and proudly shows a cat drawing.; pat: A hand pats Lynn on the head; she sways happily, then jumps for joy.; wave: Lynn waves hello.; cheer: Lynn cheers and hops twice with her arms up.; party: Lynn pops a party popper and confetti falls.; inspect: Lynn inspects something closely with a magnifying glass.; surprised: Lynn is startled and jumps.; confused: Lynn is confused, tilting her head and scratching it.; think: Lynn thinks it over, reviewing a sheet of paper, then nods with a check mark.; sleep: Lynn falls asleep standing up.; shy: Lynn gets shy, covering her blushing cheeks and swaying.; pout: Lynn pouts with crossed arms and stomps her foot.; cry: Lynn cries, rubbing her eyes and wailing.; laugh: Lynn laughs so hard she holds her belly.; bow: Lynn bows politely.; heart: Lynn makes a big heart with her arms, then a small heart with her hands.; thumbs_up: Lynn gives a confident thumbs up, then two.; peace: Lynn throws a playful peace sign, then a double peace.; salute: Lynn salutes smartly.; clap: Lynn claps her hands.; shrug: Lynn shrugs with her palms up.; facepalm: Lynn facepalms with a sigh.; nod: Lynn nods in agreement.; shake_head: Lynn shakes her head no.; point: Lynn points right at the viewer.; spin: Lynn spins around once.; dance: Lynn dances, swinging her arms and kicking her legs.; scared: Lynn is scared and trembles, hugging herself.; sneeze: Lynn sneezes.; snack: Lynn eats a rice ball with delight.; wink: Lynn winks with a finger to her lips.; sigh: Lynn slumps and lets out a tired sigh.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "read",
+              "type",
+              "tea",
+              "music",
+              "stretch",
+              "doze",
+              "water",
+              "sweep",
+              "paper_plane",
+              "doodle",
+              "pat",
+              "wave",
+              "cheer",
+              "party",
+              "inspect",
+              "surprised",
+              "confused",
+              "think",
+              "sleep",
+              "shy",
+              "pout",
+              "cry",
+              "laugh",
+              "bow",
+              "heart",
+              "thumbs_up",
+              "peace",
+              "salute",
+              "clap",
+              "shrug",
+              "facepalm",
+              "nod",
+              "shake_head",
+              "point",
+              "spin",
+              "dance",
+              "scared",
+              "sneeze",
+              "snack",
+              "wink",
+              "sigh"
+            ]
+          },
+          "line": {
+            "type": "string",
+            "maxLength": 30,
+            "description": "Optional Chinese or English line for her speech card (≤ 30 characters)."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "lynn_say",
+      "description": "Change the line in Lynn's speech card without changing her animation.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 30
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "lynn_list_actions",
+      "description": "List Lynn's available actions.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "lynn_status",
+      "description": "Report the action Lynn is currently playing and her line.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "read",
+      "name": "看书",
+      "kind": "idle",
+      "description": "Lynn reads a book, turning pages and smiling at a passage.",
+      "default_line": "这本书好有意思。",
+      "approx_seconds": 9.5
+    },
+    {
+      "id": "type",
+      "name": "敲电脑",
+      "kind": "idle",
+      "description": "Lynn types on her laptop, glances up, and hits Enter with a flourish.",
+      "default_line": "写代码中,别打扰我哦。",
+      "approx_seconds": 9.9
+    },
+    {
+      "id": "tea",
+      "name": "喝茶",
+      "kind": "idle",
+      "description": "Lynn sips tea and lets out a contented sigh.",
+      "default_line": "喝口茶,歇一会儿。",
+      "approx_seconds": 8.8
+    },
+    {
+      "id": "music",
+      "name": "听音乐",
+      "kind": "idle",
+      "description": "Lynn listens to music on headphones, bobbing her head to the beat.",
+      "default_line": "这首歌好好听~",
+      "approx_seconds": 7.4
+    },
+    {
+      "id": "stretch",
+      "name": "伸懒腰",
+      "kind": "idle",
+      "description": "Lynn stretches her arms up, yawns, and relaxes.",
+      "default_line": "嗯——伸个懒腰。",
+      "approx_seconds": 3.8
+    },
+    {
+      "id": "doze",
+      "name": "打瞌睡",
+      "kind": "idle",
+      "description": "Lynn dozes off standing up, nodding, then wakes with a start.",
+      "default_line": "Zzz……",
+      "approx_seconds": 9.8
+    },
+    {
+      "id": "water",
+      "name": "浇花",
+      "kind": "idle",
+      "description": "Lynn waters a potted plant until it blooms, then wipes her brow.",
+      "default_line": "给小花浇水~",
+      "approx_seconds": 5.5
+    },
+    {
+      "id": "sweep",
+      "name": "扫地",
+      "kind": "idle",
+      "description": "Lynn sweeps the floor with a small broom.",
+      "default_line": "打扫一下,干干净净。",
+      "approx_seconds": 4.8
+    },
+    {
+      "id": "paper_plane",
+      "name": "纸飞机",
+      "kind": "idle",
+      "description": "Lynn throws a paper airplane and watches it fly away.",
+      "default_line": "飞吧,纸飞机!",
+      "approx_seconds": 3.4
+    },
+    {
+      "id": "doodle",
+      "name": "画画",
+      "kind": "idle",
+      "description": "Lynn doodles in a sketchbook and proudly shows a cat drawing.",
+      "default_line": "画一只小猫给你看。",
+      "approx_seconds": 5.5
+    },
+    {
+      "id": "pat",
+      "name": "摸头",
+      "kind": "interaction",
+      "description": "A hand pats Lynn on the head; she sways happily, then jumps for joy.",
+      "default_line": "诶嘿嘿……被摸头了。",
+      "approx_seconds": 3.4
+    },
+    {
+      "id": "wave",
+      "name": "挥手",
+      "kind": "interaction",
+      "description": "Lynn waves hello.",
+      "default_line": "你好呀!",
+      "approx_seconds": 2.2
+    },
+    {
+      "id": "cheer",
+      "name": "欢呼",
+      "kind": "interaction",
+      "description": "Lynn cheers and hops twice with her arms up.",
+      "default_line": "太棒了!",
+      "approx_seconds": 1.4
+    },
+    {
+      "id": "party",
+      "name": "撒花",
+      "kind": "interaction",
+      "description": "Lynn pops a party popper and confetti falls.",
+      "default_line": "恭喜恭喜!",
+      "approx_seconds": 3.1
+    },
+    {
+      "id": "inspect",
+      "name": "放大镜",
+      "kind": "interaction",
+      "description": "Lynn inspects something closely with a magnifying glass.",
+      "default_line": "嗯?让我仔细看看。",
+      "approx_seconds": 2.8
+    },
+    {
+      "id": "surprised",
+      "name": "吓一跳",
+      "kind": "interaction",
+      "description": "Lynn is startled and jumps.",
+      "default_line": "哇!吓我一跳。",
+      "approx_seconds": 1.4
+    },
+    {
+      "id": "confused",
+      "name": "疑惑",
+      "kind": "interaction",
+      "description": "Lynn is confused, tilting her head and scratching it.",
+      "default_line": "咦?这是怎么回事?",
+      "approx_seconds": 2.5
+    },
+    {
+      "id": "think",
+      "name": "思考",
+      "kind": "interaction",
+      "description": "Lynn thinks it over, reviewing a sheet of paper, then nods with a check mark.",
+      "default_line": "让我想一想……",
+      "approx_seconds": 3.8
+    },
+    {
+      "id": "sleep",
+      "name": "睡觉",
+      "kind": "interaction",
+      "description": "Lynn falls asleep standing up.",
+      "default_line": "晚安……",
+      "approx_seconds": 7.3
+    },
+    {
+      "id": "shy",
+      "name": "害羞",
+      "kind": "interaction",
+      "description": "Lynn gets shy, covering her blushing cheeks and swaying.",
+      "default_line": "别、别这样看我啦……",
+      "approx_seconds": 2.8
+    },
+    {
+      "id": "pout",
+      "name": "生气",
+      "kind": "interaction",
+      "description": "Lynn pouts with crossed arms and stomps her foot.",
+      "default_line": "哼,不理你了!",
+      "approx_seconds": 2.8
+    },
+    {
+      "id": "cry",
+      "name": "哭哭",
+      "kind": "interaction",
+      "description": "Lynn cries, rubbing her eyes and wailing.",
+      "default_line": "呜呜呜……",
+      "approx_seconds": 2.5
+    },
+    {
+      "id": "laugh",
+      "name": "大笑",
+      "kind": "interaction",
+      "description": "Lynn laughs so hard she holds her belly.",
+      "default_line": "哈哈哈,笑死我了!",
+      "approx_seconds": 3.4
+    },
+    {
+      "id": "bow",
+      "name": "鞠躬",
+      "kind": "interaction",
+      "description": "Lynn bows politely.",
+      "default_line": "请多多指教。",
+      "approx_seconds": 2.3
+    },
+    {
+      "id": "heart",
+      "name": "比心",
+      "kind": "interaction",
+      "description": "Lynn makes a big heart with her arms, then a small heart with her hands.",
+      "default_line": "送你一颗心~",
+      "approx_seconds": 2.5
+    },
+    {
+      "id": "thumbs_up",
+      "name": "点赞",
+      "kind": "interaction",
+      "description": "Lynn gives a confident thumbs up, then two.",
+      "default_line": "干得漂亮!",
+      "approx_seconds": 1.8
+    },
+    {
+      "id": "peace",
+      "name": "剪刀手",
+      "kind": "interaction",
+      "description": "Lynn throws a playful peace sign, then a double peace.",
+      "default_line": "耶~",
+      "approx_seconds": 1.8
+    },
+    {
+      "id": "salute",
+      "name": "敬礼",
+      "kind": "interaction",
+      "description": "Lynn salutes smartly.",
+      "default_line": "收到,保证完成任务!",
+      "approx_seconds": 1.7
+    },
+    {
+      "id": "clap",
+      "name": "鼓掌",
+      "kind": "interaction",
+      "description": "Lynn claps her hands.",
+      "default_line": "啪啪啪!",
+      "approx_seconds": 2.2
+    },
+    {
+      "id": "shrug",
+      "name": "摊手",
+      "kind": "interaction",
+      "description": "Lynn shrugs with her palms up.",
+      "default_line": "我也不知道诶。",
+      "approx_seconds": 1.6
+    },
+    {
+      "id": "facepalm",
+      "name": "捂脸",
+      "kind": "interaction",
+      "description": "Lynn facepalms with a sigh.",
+      "default_line": "唉,真拿你没办法。",
+      "approx_seconds": 1.7
+    },
+    {
+      "id": "nod",
+      "name": "点头",
+      "kind": "interaction",
+      "description": "Lynn nods in agreement.",
+      "default_line": "嗯嗯,好的!",
+      "approx_seconds": 1.6
+    },
+    {
+      "id": "shake_head",
+      "name": "摇头",
+      "kind": "interaction",
+      "description": "Lynn shakes her head no.",
+      "default_line": "不行不行。",
+      "approx_seconds": 1.8
+    },
+    {
+      "id": "point",
+      "name": "指向你",
+      "kind": "interaction",
+      "description": "Lynn points right at the viewer.",
+      "default_line": "就是你!",
+      "approx_seconds": 1.6
+    },
+    {
+      "id": "spin",
+      "name": "转圈",
+      "kind": "interaction",
+      "description": "Lynn spins around once.",
+      "default_line": "转个圈圈~",
+      "approx_seconds": 1.5
+    },
+    {
+      "id": "dance",
+      "name": "跳舞",
+      "kind": "interaction",
+      "description": "Lynn dances, swinging her arms and kicking her legs.",
+      "default_line": "一起来跳舞吧!",
+      "approx_seconds": 2.8
+    },
+    {
+      "id": "scared",
+      "name": "害怕",
+      "kind": "interaction",
+      "description": "Lynn is scared and trembles, hugging herself.",
+      "default_line": "好、好可怕……",
+      "approx_seconds": 1.7
+    },
+    {
+      "id": "sneeze",
+      "name": "打喷嚏",
+      "kind": "interaction",
+      "description": "Lynn sneezes.",
+      "default_line": "阿——嚏!",
+      "approx_seconds": 2.1
+    },
+    {
+      "id": "snack",
+      "name": "吃饭团",
+      "kind": "interaction",
+      "description": "Lynn eats a rice ball with delight.",
+      "default_line": "开动啦,好好吃!",
+      "approx_seconds": 3.0
+    },
+    {
+      "id": "wink",
+      "name": "眨眼",
+      "kind": "interaction",
+      "description": "Lynn winks with a finger to her lips.",
+      "default_line": "嘘,这是我们的秘密。",
+      "approx_seconds": 1.6
+    },
+    {
+      "id": "sigh",
+      "name": "叹气",
+      "kind": "interaction",
+      "description": "Lynn slumps and lets out a tired sigh.",
+      "default_line": "唉……好累啊。",
+      "approx_seconds": 1.9
+    }
+  ]
+}

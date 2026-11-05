@@ -10,6 +10,7 @@
 #include "ui_assets.h"
 
 #include "lynn_anim.h"
+#include "lynn_stage.h"
 
 #include "app_portal.h"
 #include "portal_proto.h"
@@ -67,6 +68,10 @@ static struct {
     // 设备页
     lv_obj_t *info[4];
     row_t menu[UI_MENU_COUNT];
+    // Lynn 舞台页
+    lv_obj_t *stage, *stage_line, *stage_cap;
+    lv_timer_t *stage_timer;
+    bool stage_paused;
     // 配网页
     lv_obj_t *prov_status, *prov_icon, *prov_qr, *prov_info[3];
     char prov_qr_data[96];
@@ -699,6 +704,142 @@ static void refresh_system(const ui_model_t *m) {
 }
 
 // ---------------------------------------------------------------------------
+// Lynn 舞台页:3 倍整数放大的 80x76 逻辑像素画布,24 fps
+// ---------------------------------------------------------------------------
+
+static lynn_stage_t s_stage;
+static bool s_stage_ready;
+static uint16_t s_stage_buf[LYNN_STAGE_W * LYNN_STAGE_H];
+static int16_t s_stage_shown = -2;          // 卡片上显示的动作,变化时更新文字
+static uint32_t s_stage_clock;              // 已按真实时间推进到的 tick 起点(ms)
+static lynn_rect_t s_stage_prev;            // 上一帧的内容包围盒(逻辑像素)
+static uint32_t s_fps_window, s_fps_frames, s_fps;
+
+static void stage_sync_idle(void);
+
+static void stage_ensure(void) {
+    if (!s_stage_ready) {
+        lynn_stage_init(&s_stage, lv_rand(1, 0x7FFFFFFF));
+        s_stage_ready = true;
+    }
+}
+
+static void stage_card(void) {
+    if (!s.stage_line) return;
+    lv_label_set_text(s.stage_line, lynn_stage_line(&s_stage));
+    const char *kind = s_stage.action < 0 ? "" : lynn_stage_busy(&s_stage) ? "互动 · " : "待机 · ";
+    lv_label_set_text_fmt(s.stage_cap, "%s%s", kind, lynn_stage_action_name(&s_stage));
+    s_stage_shown = s_stage.action;
+}
+
+// 只重绘"上一帧 ∪ 本帧"内容所在的矩形(换成 3 倍后的屏幕坐标),而不是整个 240x228 舞台。
+static void stage_invalidate(const lynn_rect_t *now) {
+    lynn_rect_t u = *now;
+    if (s_stage_prev.x1 <= s_stage_prev.x2) {
+        if (s_stage_prev.x1 < u.x1) u.x1 = s_stage_prev.x1;
+        if (s_stage_prev.y1 < u.y1) u.y1 = s_stage_prev.y1;
+        if (s_stage_prev.x2 > u.x2) u.x2 = s_stage_prev.x2;
+        if (s_stage_prev.y2 > u.y2) u.y2 = s_stage_prev.y2;
+    }
+    s_stage_prev = *now;
+    if (u.x1 > u.x2) return;
+    lv_area_t a;
+    lv_obj_get_coords(s.stage, &a);
+    lv_area_t r = { a.x1 + u.x1 * 3, a.y1 + u.y1 * 3, a.x1 + u.x2 * 3 + 2, a.y1 + u.y2 * 3 + 2 };
+    lv_obj_invalidate_area(s.stage, &r);
+}
+
+static void stage_tick(lv_timer_t *t) {
+    (void)t;
+    if (!s.stage) return;
+    // 按真实时间推进:渲染掉帧时补走 tick,动作时长与运动速度不受帧率影响。
+    const uint32_t period = 1000 / LYNN_TICK_HZ;
+    uint32_t now = lv_tick_get();
+    uint32_t due = (now - s_stage_clock) / period;
+    if (due > 6) {                      // 卡顿太久(如换页)时不追,直接跳到现在
+        s_stage_clock = now - period;
+        due = 1;
+    }
+    bool changed = false;
+    for (uint32_t i = 0; i < due; i++) changed |= lynn_stage_tick(&s_stage);
+    s_stage_clock += due * period;
+    if (changed) {
+        lynn_rect_t box;
+        lynn_stage_render(&s_stage, s_stage_buf, &box);
+        stage_invalidate(&box);
+        s_fps_frames++;
+    }
+    if (now - s_fps_window >= 1000) {
+        s_fps = s_fps_frames;
+        s_fps_frames = 0;
+        s_fps_window = now;
+    }
+    if (s_stage.action != s_stage_shown) stage_card();
+}
+
+static void build_lynn(lv_obj_t *scr) {
+    stage_ensure();
+    lv_obj_t *c = card(scr, X0 - 4, 34, XW + 6, 36);
+    s.stage_line = label(c, &ui_font_12, C_INK, 8, 4, XW - 10, "");
+    s.stage_cap = label(c, &ui_font_12, C_MUTED, 8, 19, XW - 10, "");
+    s.stage = lv_canvas_create(scr);
+    lv_canvas_set_buffer(s.stage, s_stage_buf, LYNN_STAGE_W, LYNN_STAGE_H, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(s.stage, 0, 76);
+    lv_obj_set_size(s.stage, LYNN_STAGE_W * 3, LYNN_STAGE_H * 3);
+    lv_image_set_inner_align(s.stage, LV_IMAGE_ALIGN_STRETCH);   // 240x228 = 80x76 的整数 3 倍
+    lv_image_set_antialias(s.stage, false);
+    lv_obj_move_to_index(s.stage, 0);                             // 画布在最底层,卡片与页签压在上面
+    lynn_stage_render(&s_stage, s_stage_buf, &s_stage_prev);
+    stage_card();
+    s_stage_clock = lv_tick_get();
+    s.stage_timer = lv_timer_create(stage_tick, 1000 / LYNN_TICK_HZ / 2, NULL);   // 半拍轮询,按真实时间走帧
+    s.stage_paused = false;
+    stage_sync_idle();
+}
+
+// 舞台定时器跟随屏幕阶段:关屏时暂停(省电),任何方式唤醒(按键、拍手、agent、新动态)都会
+// 经过 ui_refresh 恢复。恢复时重置时钟,不去补关屏期间的 tick。
+static void stage_sync_idle(void) {
+    if (!s.stage_timer) return;
+    bool paused = s.idle == APP_IDLE_OFF;
+    if (paused == s.stage_paused) return;
+    s.stage_paused = paused;
+    if (paused) {
+        lv_timer_pause(s.stage_timer);
+    } else {
+        s_stage_clock = lv_tick_get();
+        lv_timer_resume(s.stage_timer);
+    }
+}
+
+bool ui_lynn_play(const char *id, const char *line) {
+    stage_ensure();
+    if (line) lynn_stage_say(&s_stage, line);
+    if (id) {
+        if (lynn_stage_play(&s_stage, id) < 0) {
+            if (line) lynn_stage_say(&s_stage, NULL);
+            return false;
+        }
+    } else {
+        lynn_stage_play_random(&s_stage);
+    }
+    stage_card();
+    return true;
+}
+
+void ui_lynn_say(const char *text) {
+    stage_ensure();
+    lynn_stage_say(&s_stage, text);
+    stage_card();
+}
+
+void ui_lynn_status(char *buf, size_t cap) {
+    stage_ensure();
+    snprintf(buf, cap, "action=%s fps=%u line=\"%s\"", lynn_stage_action_id(&s_stage), (unsigned)s_fps,
+             lynn_stage_line(&s_stage));
+}
+
+// ---------------------------------------------------------------------------
 // 配网页
 // ---------------------------------------------------------------------------
 
@@ -874,6 +1015,10 @@ void ui_build(const ui_model_t *m) {
         s.toast_timer = NULL;
     }
     if (s.toast) lv_anim_delete(s.toast, toast_set_y);
+    if (s.stage_timer) {
+        lv_timer_delete(s.stage_timer);
+        s.stage_timer = NULL;
+    }
     // 清空旧页的控件指针(定时器回调可能还会访问它们)。
     lv_timer_t *anim = s.anim_timer;
     uint8_t idle = s.idle;
@@ -888,12 +1033,14 @@ void ui_build(const ui_model_t *m) {
     if (old) lv_obj_delete(old);
     s.built_provisioning = m->provisioning;
     s.built_page = m->nav->page;
-    static const char *titles[APP_PAGE_COUNT] = { "AstraFoundry", "AstraFoundry", "AstraFoundry", "Astra Monitor" };
+    static const char *titles[APP_PAGE_COUNT] = { "Lynn", "AstraFoundry", "AstraFoundry", "AstraFoundry",
+                                                  "Astra Monitor" };
     build_chrome(s.scr, m->provisioning ? "Astra Monitor" : titles[m->nav->page], !m->provisioning);
     if (m->provisioning) {
         build_provisioning(s.scr);
     } else {
         switch (m->nav->page) {
+        case APP_PAGE_LYNN:   build_lynn(s.scr); break;
         case APP_PAGE_HOME:   build_home(s.scr); break;
         case APP_PAGE_FEED:   build_feed(s.scr); break;
         case APP_PAGE_REPOS:  build_repos(s.scr); break;
@@ -912,6 +1059,7 @@ void ui_refresh(const ui_model_t *m) {
         return;
     }
     s.idle = m->idle;
+    stage_sync_idle();
     refresh_chrome(m);
     if (m->provisioning) {
         refresh_provisioning(m);
@@ -919,6 +1067,7 @@ void ui_refresh(const ui_model_t *m) {
     }
     switch (m->nav->page) {
     case APP_PAGE_HOME:   refresh_home(m); break;
+    case APP_PAGE_LYNN:   break;           // 舞台由自己的 24 fps 定时器刷新
     case APP_PAGE_FEED:   refresh_feed(m); break;
     case APP_PAGE_REPOS:  refresh_repos(m); break;
     case APP_PAGE_SYSTEM: refresh_system(m); break;

@@ -13,12 +13,14 @@ int main(void) {
     app_nav_set_items(&n, APP_PAGE_SYSTEM, 6);
     assert(app_nav_key(&n, APP_KEY_DOWN, 10) == APP_NAV_PAGE && n.page == APP_PAGE_FEED);
     assert(app_nav_key(&n, APP_KEY_UP, 20) == APP_NAV_PAGE && n.page == APP_PAGE_HOME);
-    assert(app_nav_key(&n, APP_KEY_UP, 30) == APP_NAV_PAGE && n.page == APP_PAGE_SYSTEM);
+    assert(app_nav_key(&n, APP_KEY_UP, 30) == APP_NAV_PAGE && n.page == APP_PAGE_LYNN);   // 总览左边是 Lynn
+    assert(app_nav_key(&n, APP_KEY_UP, 32) == APP_NAV_PAGE && n.page == APP_PAGE_SYSTEM);  // 首尾相接
     // 最后一页(设备)上 上/下 仍然翻页,不移动菜单光标。
     assert(app_nav_key(&n, APP_KEY_UP, 35) == APP_NAV_PAGE && n.page == APP_PAGE_REPOS);
     assert(app_nav_key(&n, APP_KEY_DOWN, 36) == APP_NAV_PAGE && n.page == APP_PAGE_SYSTEM);
     assert(n.cursor[APP_PAGE_SYSTEM] == 0);
-    assert(app_nav_key(&n, APP_KEY_DOWN, 40) == APP_NAV_PAGE && n.page == APP_PAGE_HOME);
+    assert(app_nav_key(&n, APP_KEY_DOWN, 40) == APP_NAV_PAGE && n.page == APP_PAGE_LYNN);
+    assert(app_nav_key(&n, APP_KEY_DOWN, 41) == APP_NAV_PAGE && n.page == APP_PAGE_HOME);
 
     // 确定 单击/双击 在页内循环选择;0 或 1 个条目时不动。
     assert(app_nav_key(&n, APP_KEY_OK, 50) == APP_NAV_NONE);

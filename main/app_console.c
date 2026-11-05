@@ -3,6 +3,7 @@
 
 #include "app_net.h"
 #include "app_settings.h"
+#include "lynn_stage_data.h"
 
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -18,6 +19,46 @@ static const char *TAG = "console";
 #define LINE_MAX_LEN 192
 
 static app_console_cb_t s_cb;
+static app_console_lynn_cb_t s_lynn;
+
+static char *next_arg(char **cursor);
+
+void app_console_set_lynn(app_console_lynn_cb_t cb) {
+    s_lynn = cb;
+}
+
+static char *rest(char *cur) {
+    while (*cur == ' ') cur++;
+    return cur;
+}
+
+static void handle_lynn(char *cur) {
+    char *verb = next_arg(&cur);
+    char out[160] = "";
+    if (!verb || strcmp(verb, "list") == 0) {
+        for (uint8_t i = 0; i < lynn_action_count; i++) {
+            printf("%s\t%s\t%s\t%s\n", lynn_actions[i].id, i < lynn_idle_count ? "idle" : "interaction",
+                   lynn_actions[i].name, lynn_actions[i].desc);
+        }
+        return;
+    }
+    bool ok = false;
+    if (strcmp(verb, "play") == 0) {
+        char *id = next_arg(&cur);
+        char *line = rest(cur);
+        ok = id && s_lynn && s_lynn("play", id, *line ? line : NULL, out, sizeof(out));
+        printf(ok ? "ok\n" : "error: unknown action (try: lynn list)\n");
+    } else if (strcmp(verb, "say") == 0) {
+        char *text = rest(cur);
+        ok = s_lynn && s_lynn("say", *text ? text : NULL, NULL, out, sizeof(out));
+        printf(ok ? "ok\n" : "error\n");
+    } else if (strcmp(verb, "status") == 0) {
+        ok = s_lynn && s_lynn("status", NULL, NULL, out, sizeof(out));
+        printf("%s\n", ok ? out : "error");
+    } else {
+        printf("usage: lynn list | lynn play <id> [line] | lynn say <text> | lynn status\n");
+    }
+}
 
 // 取下一个参数:支持双引号包裹(SSID 可含空格)。返回 NULL 表示没有更多参数。
 static char *next_arg(char **cursor) {
@@ -69,6 +110,8 @@ static void handle_line(char *line) {
     } else if (strcmp(cmd, "refresh") == 0) {
         if (s_cb) s_cb(APP_CONSOLE_REFRESH);
         printf("refresh requested\n");
+    } else if (strcmp(cmd, "lynn") == 0) {
+        handle_lynn(cur);
     } else if (strcmp(cmd, "key") == 0) {
         static const char *names[] = { "up", "down", "ok", "double", "long" };
         char *k = next_arg(&cur);
@@ -82,7 +125,7 @@ static void handle_line(char *line) {
     } else if (strcmp(cmd, "status") == 0) {
         if (s_cb) s_cb(APP_CONSOLE_STATUS);
     } else {
-        printf("commands: token, wifi, refresh, status, key\n");
+        printf("commands: token, wifi, refresh, status, key, lynn\n");
     }
 }
 

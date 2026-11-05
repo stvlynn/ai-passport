@@ -15,6 +15,7 @@ warm paper and ink, with yellow reserved for today's new stars.
 
 | Page | Content |
 | --- | --- |
+| Lynn | A large full-body Lynn (3x pixel art, 24 fps) with her speech card: 10 idle activities and 31 interactions; see [Lynn actions](lynn-actions.md) |
 | Overview | Total stars, today's new stars, open issues, open PRs, repository count, a focus repository, and Lynn with a status speech bubble |
 | Activity | The 12 most recent star increases, issues, and PRs |
 | Repositories | Repositories by stars, with private markers, issue/PR counts, and a square-root star bar |
@@ -25,7 +26,10 @@ warm paper and ink, with yellow reserved for today's new stars.
 | UP / DOWN | Previous / next page (wraps around) |
 | OK click / double click | Select the next / previous item on the page: the focus repository, a list row, or a Device menu item (wraps around) |
 | OK long press | Confirm. Device page: run the selected item. Other pages: sync now. Provisioning page: go back |
-| UP / DOWN long press | Overview: poke Lynn |
+| UP / DOWN long press | Overview or Lynn page: poke Lynn |
+| OK click / long press on the Lynn page | A random interaction / a head pat |
+
+Pages run Lynn ⇄ Overview ⇄ Activity ⇄ Repositories ⇄ Device; the device starts on Overview.
 
 Each key has one meaning on every page, so flipping pages never conflicts with
 moving the selection. Every long press gives visible feedback: a card states

@@ -33,6 +33,7 @@
 | [`images/logo-wordmark.png`](images/logo-wordmark.png) | 1648 × 336，PNG RGBA | 从仓库原始 `images/logo.png` 中精确裁切并去除背景的黑色字标；用于中英文项目 README 的浅色主题。 |
 | [`images/logo-wordmark-dark.png`](images/logo-wordmark-dark.png) | 1648 × 336，PNG RGBA | 提取字标的白色版本；README 使用 `<picture>` 在 GitHub 深色主题下显示。 |
 | [`images/lynn/`](images/lynn/) | 47 张 64 × 64 PNG RGBA（硬边透明，每张不超过 17 色） | 角色 Lynn（[lynn.stv.pm](https://lynn.stv.pm)）的像素精灵：待机、眨眼、开心、开心跳起、惊讶、审阅、睡觉、困惑，以及它们的补充帧（左右张望、开心第二帧、把惊讶帧上移 2 像素做成的惊跳帧、审阅/困惑/睡觉各两帧），和看书（4 帧）、敲电脑（4 帧）、打瞌睡（4 帧）、招手（3 帧）、喝茶（3 帧）、伸懒腰（3 帧）、听音乐（3 帧）、礼花（3 帧）、放大镜（2 帧）的动画帧。2026-11-04 用 codex CLI 图像工具依据角色所有者提供的设定图与表情贴纸生成，每个中间帧都以对应关键帧为参考绘制；再降采样到 64 像素栅格，并量化到关键帧的调色板。`tools/gen_app_assets.py` 将其最近邻放大 2 倍，转换为 `main/ui_assets.c` 中的 RGB565A8 数组。仅限所有者自己的项目使用。 |
+| [`images/lynn_stage/`](images/lynn_stage/) | 50 张 64 × 64 PNG RGBA（硬边透明，脚底在第 59 行） | Lynn 舞台页的全身画面：浇花、摸头、扫地、纸飞机、画画，以及 24 个互动（害羞、生气、哭、大笑、鞠躬、比心、点赞、剪刀手、敬礼、鼓掌、摊手、捂脸、指向、转圈、跳舞、害怕、打喷嚏、吃饭团、眨眼、叹气）。2026-11-05 用 codex CLI 图像工具生成：关键帧以标准待机精灵为参考，中间帧以对应关键帧为参考；提示词在 `tools/lynn_art.py`。`tools/gen_lynn_stage.py --prep` 把它们对齐到 64 像素栅格和调色板，构建步骤再与复用的 `images/lynn/` 精灵一起打包进 `main/lynn_stage_data.c`（共用调色板、每像素 1 字节、按包围盒裁切）。 |
 
 - 使用描述性命名，并记录尺寸、像素格式、转换步骤与目标路径。
 - 优先采用适合 240 × 320 RGB565 显示的格式，并纳入 Flash 与内部 RAM 考量。

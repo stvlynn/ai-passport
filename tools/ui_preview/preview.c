@@ -138,6 +138,28 @@ int main(int argc, char **argv) {
     };
 
     ui_init();
+    nav.page = APP_PAGE_LYNN;
+    ui_build(&m);
+    ui_lynn_play("pat", NULL);
+    pump(1500);
+    dump(out, "00-lynn");
+    // 回归:在 Lynn 页关屏后唤醒,再触发动作,舞台必须继续走帧(曾经停在关屏前的画面)。
+    m.idle = APP_IDLE_OFF;
+    ui_set_idle(&m);
+    pump(500);
+    m.idle = APP_IDLE_AWAKE;
+    ui_refresh(&m);                       // 唤醒路径只调用 ui_refresh
+    ui_lynn_play("spin", NULL);
+    char st0[160], st1[160];
+    ui_lynn_status(st0, sizeof(st0));
+    pump(3000);
+    ui_lynn_status(st1, sizeof(st1));
+    printf("after wake: %s -> %s\n", st0, st1);
+    if (strstr(st1, "action=spin")) {
+        fprintf(stderr, "FAIL: stage stayed frozen after waking on the Lynn page\n");
+        return 1;
+    }
+    nav.page = APP_PAGE_HOME;
     ui_build(&m);
     pump(200);
     dump(out, "01-home");

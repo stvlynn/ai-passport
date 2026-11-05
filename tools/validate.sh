@@ -84,6 +84,9 @@ run_static_checks() {
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_lynn_anim.c main/lynn_anim.c -o "${test_dir}/test_lynn_anim"
     "${test_dir}/test_lynn_anim"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_lynn_stage.c main/lynn_stage.c main/lynn_stage_data.c -o "${test_dir}/test_lynn_stage"
+    "${test_dir}/test_lynn_stage"
     cjson_dir="${IDF_PATH:-}/components/json/cJSON"
     if [[ -f "${cjson_dir}/cJSON.c" ]]; then
         "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain -I"${cjson_dir}" \
