@@ -102,7 +102,9 @@ static void post(ev_type_t type, uint8_t a, uint8_t b) {
 static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
     (void)user;
     // 上/下 长按留给"戳看板娘";上/下 双击不使用(单击即翻页)。
-    if (ev == BSP_BTN_CLICK || ev == BSP_BTN_LONG || (btn == BSP_BTN_OK && ev == BSP_BTN_DOUBLE)) {
+    // OK 的按下/抬起只用于 Lynn 页按住说话(push-to-talk)。
+    if (ev == BSP_BTN_CLICK || ev == BSP_BTN_LONG ||
+        (btn == BSP_BTN_OK && (ev == BSP_BTN_DOUBLE || ev == BSP_BTN_PRESS || ev == BSP_BTN_RELEASE))) {
         post(EV_KEY, (uint8_t)btn, (uint8_t)ev);
     }
 }
@@ -444,11 +446,22 @@ static void handle_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
         if (key == APP_KEY_OK_LONG) provisioning_exit();
         return;
     }
-    // Lynn: OK records five seconds; actions come from Grok tools.
-    if (s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE &&
-        (key == APP_KEY_OK || key == APP_KEY_OK_DOUBLE || key == APP_KEY_OK_LONG)) {
+    // Lynn: hold OK to talk (recording starts on press, sent on release).
+    // Clicks are consumed so a talk never also triggers page actions.
+    bool lynn_talk = s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE;
+    if (btn == BSP_BTN_OK && ev == BSP_BTN_PRESS) {
+        if (lynn_talk) {
+            app_nav_poke(&s_nav, now_ms());
+            on_grok_status(app_grok_ptt_down() ? "Listening... release OK to send" : "Microphone busy. Please wait");
+        }
+        return;
+    }
+    if (btn == BSP_BTN_OK && ev == BSP_BTN_RELEASE) {
+        app_grok_ptt_up();
+        return;
+    }
+    if (lynn_talk && btn == BSP_BTN_OK) {
         app_nav_poke(&s_nav, now_ms());
-        on_grok_status(app_grok_voice() ? "Preparing microphone..." : "Microphone busy. Please wait");
         return;
     }
     switch (app_nav_key(&s_nav, key, now_ms())) {
@@ -547,7 +560,8 @@ static void app_task(void *arg) {
                     static const struct { bsp_btn_t btn; bsp_btn_ev_t ev; } K[] = {
                         { BSP_BTN_UP, BSP_BTN_CLICK }, { BSP_BTN_DOWN, BSP_BTN_CLICK },
                         { BSP_BTN_OK, BSP_BTN_CLICK }, { BSP_BTN_OK, BSP_BTN_DOUBLE },
-                        { BSP_BTN_OK, BSP_BTN_LONG },
+                        { BSP_BTN_OK, BSP_BTN_LONG }, { BSP_BTN_OK, BSP_BTN_PRESS },
+                        { BSP_BTN_OK, BSP_BTN_RELEASE },
                     };
                     int i = ev.a - APP_CONSOLE_KEY_UP;
                     handle_key(K[i].btn, K[i].ev);

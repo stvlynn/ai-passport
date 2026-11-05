@@ -27,6 +27,8 @@ typedef enum {
     APP_CONSOLE_KEY_OK,
     APP_CONSOLE_KEY_DOUBLE,
     APP_CONSOLE_KEY_LONG,
+    APP_CONSOLE_KEY_PRESS,     // OK down (push-to-talk)
+    APP_CONSOLE_KEY_RELEASE,   // OK up
 } app_console_cmd_t;
 
 typedef void (*app_console_cb_t)(app_console_cmd_t cmd);

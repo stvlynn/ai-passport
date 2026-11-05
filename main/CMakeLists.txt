@@ -10,6 +10,7 @@ idf_component_register(
          "app_audio.c"
          "app_grok.c"
          "grok_proto.c"
+         "voice_codec.c"
          "app_console.c"
          "gh_model.c"
          "lynn_anim.c"

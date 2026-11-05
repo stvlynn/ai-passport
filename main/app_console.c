@@ -113,15 +113,15 @@ static void handle_line(char *line) {
     } else if (strcmp(cmd, "lynn") == 0) {
         handle_lynn(cur);
     } else if (strcmp(cmd, "key") == 0) {
-        static const char *names[] = { "up", "down", "ok", "double", "long" };
+        static const char *names[] = { "up", "down", "ok", "double", "long", "press", "release" };
         char *k = next_arg(&cur);
-        for (int i = 0; k && i < 5; i++) {
+        for (int i = 0; k && i < 7; i++) {
             if (strcmp(k, names[i]) == 0) {
                 if (s_cb) s_cb((app_console_cmd_t)(APP_CONSOLE_KEY_UP + i));
                 return;
             }
         }
-        printf("usage: key up|down|ok|double|long\n");
+        printf("usage: key up|down|ok|double|long|press|release\n");
     } else if (strcmp(cmd, "status") == 0) {
         if (s_cb) s_cb(APP_CONSOLE_STATUS);
     } else {

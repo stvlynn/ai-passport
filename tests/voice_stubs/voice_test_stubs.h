@@ -10,6 +10,8 @@ typedef int esp_err_t;
 #define ESP_ERR_INVALID_STATE 0x103
 #define ESP_ERR_TIMEOUT 0x107
 #define ESP_LOGI(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
+static inline const char *esp_err_to_name(esp_err_t err) { (void)err; return "err"; }
 typedef int BaseType_t;
 typedef unsigned TickType_t;
 typedef void *TaskHandle_t;

@@ -41,6 +41,7 @@
 | 请求 | 行为 |
 | --- | --- |
 | `POST /v1/voice?bot_id=ID` | 正文必须恰为 160000 字节 PCM：五秒、16000 Hz、单声道、小端有符号 16 位。Content-Type 必须为 `audio/pcm;rate=16000;channels=1;format=s16le`，Content-Length 必须为 `160000`。拒绝分块上传。ASR/webhook 处理前返回 `202 {"request_id":"..."}`。 |
+| `POST /v1/voice?bot_id=ID`(按住说话) | Content-Type `audio/ima-adpcm;rate=8000;channels=1`,Content-Length `20004`:20000 字节 8 kHz IMA ADPCM(低半字节在前,不足补零)+ 小端 uint32 采样数(2400–40000,即 0.3–5 秒)。设备在用户按住 OK 时边录边传。解码并升采样到 16 kHz 后送 ASR。返回 `202`。 |
 | `GET /v1/events?bot_id=ID&after=0` | 在当前非零持久游标处初始化，跳过历史事件。之后轮询使用返回的游标。 |
 | `GET /v1/events?bot_id=ID&after=N` | 等待期间返回 `{"cursor":N,"events":[]}`，否则最多返回一个事件及其游标。仅在成功响应被消费后保存、更新游标。响应丢失时可使用之前的游标重试。过期或空队列可以不返回事件而直接推进游标。 |
 

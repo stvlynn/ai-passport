@@ -41,6 +41,7 @@ All `/v1/*` requests require `Authorization: Bearer DEVICE_TOKEN` and the allowl
 | Request | Behavior |
 | --- | --- |
 | `POST /v1/voice?bot_id=ID` | Exactly 160000 PCM bytes: five seconds, 16000 Hz, mono, signed little-endian 16-bit. Content-Type must be `audio/pcm;rate=16000;channels=1;format=s16le` and Content-Length must be `160000`. Chunked uploads are rejected. Returns `202 {"request_id":"..."}` before ASR/webhook processing. |
+| `POST /v1/voice?bot_id=ID` (push-to-talk) | Content-Type `audio/ima-adpcm;rate=8000;channels=1`, Content-Length `20004`: 20000 bytes of 8 kHz IMA ADPCM (low nibble first, zero padded) followed by a little-endian uint32 sample count (2400–40000, 0.3–5 s). The device streams it while the user holds OK. Decoded and upsampled to 16 kHz before ASR. Returns `202`. |
 | `GET /v1/events?bot_id=ID&after=0` | Initializes at the current nonzero durable cursor and skips historical events. Use the returned cursor for later polls. |
 | `GET /v1/events?bot_id=ID&after=N` | Returns `{"cursor":N,"events":[]}` while waiting, or at most one event and its cursor. Persist/update the cursor only after consuming a successful response. A lost response can be retried with the preceding cursor. An expired/empty queue can advance the cursor without an event. |
 

@@ -71,8 +71,11 @@ run_static_checks() {
         "${test_dir}/test_demo_${demo}_runtime"
     done
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/voice_stubs -Imain \
-        tests/test_app_voice_capture.c main/sound_synth.c -o "${test_dir}/test_app_voice_capture"
+        tests/test_app_voice_capture.c main/sound_synth.c main/voice_codec.c -o "${test_dir}/test_app_voice_capture"
     "${test_dir}/test_app_voice_capture"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_voice_codec.c main/voice_codec.c -lm -o "${test_dir}/test_voice_codec"
+    "${test_dir}/test_voice_codec"
     # Astra Monitor 应用逻辑:数据模型、GraphQL 解析(用 ESP-IDF 自带 cJSON)、导航、音效合成、配网协议。
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_gh_model.c main/gh_model.c -o "${test_dir}/test_gh_model"
@@ -103,7 +106,7 @@ run_static_checks() {
             -o "${test_dir}/test_grok_proto"
         "${test_dir}/test_grok_proto"
         "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/voice_stubs -Imain -I"${cjson_dir}" \
-            tests/test_app_grok_transport.c main/grok_proto.c main/lynn_stage.c main/lynn_stage_data.c "${cjson_dir}/cJSON.c" \
+            tests/test_app_grok_transport.c main/grok_proto.c main/voice_codec.c main/lynn_stage.c main/lynn_stage_data.c "${cjson_dir}/cJSON.c" \
             -o "${test_dir}/test_app_grok_transport"
         "${test_dir}/test_app_grok_transport"
     else

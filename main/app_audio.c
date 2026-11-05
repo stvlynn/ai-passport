@@ -2,6 +2,7 @@
 #include "app_audio.h"
 
 #include "bsp_audio.h"
+#include "voice_codec.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -24,6 +25,8 @@ static volatile bool s_listening;
 static bool s_audio_ok;
 static app_audio_clap_cb_t s_on_clap;
 static int16_t s_buf[CHUNK_SAMPLES];
+static volatile bool s_rec_on;
+static void rec_step(void);
 
 static void play(sound_id_t id) {
     sound_player_t p;
@@ -43,6 +46,10 @@ static void audio_task(void *arg) {
     clap_detector_init(&clap, CLAP_THRESHOLD);
     for (;;) {
         sound_id_t id;
+        if (s_rec_on) {
+            rec_step();
+            continue;
+        }
         TickType_t wait = s_listening ? 0 : portMAX_DELAY;
         if (xQueueReceive(s_queue, &id, wait) == pdTRUE) {
             if (s_enabled && id != SOUND_NONE && xSemaphoreTake(s_io_lock, 0) == pdTRUE) {
@@ -110,27 +117,71 @@ void app_audio_set_listening(bool listen) {
 }
 
 
-esp_err_t app_audio_capture(app_audio_sink_t sink, void *arg, unsigned seconds) {
-    if (!sink || !seconds || seconds > 5) return ESP_ERR_INVALID_ARG;
-    if (!s_audio_ok || !s_io_lock) return ESP_ERR_INVALID_STATE;
-    if (xSemaphoreTake(s_io_lock, pdMS_TO_TICKS(1000)) != pdTRUE) return ESP_ERR_TIMEOUT;
-    int16_t pcm[CHUNK_SAMPLES];
-    esp_err_t err = ESP_OK;
-    // Discard stale microphone DMA samples captured before the user prompt.
-    for (unsigned i = 0; i < 8 && err == ESP_OK; i++) err = bsp_audio_read(pcm, sizeof(pcm));
-    int64_t start = esp_timer_get_time();
-    for (unsigned i = 0; i < seconds * SOUND_RATE_HZ / CHUNK_SAMPLES && err == ESP_OK; i++) {
-        err = bsp_audio_read(pcm, sizeof(pcm));
-        if (err == ESP_OK) err = sink(pcm, sizeof(pcm), arg);
-        // Abort a congested link instead of retaining unbounded audio or
-        // silently treating a stalled stream as a clean five-second utterance.
-        int64_t elapsed = esp_timer_get_time() - start;
-        int64_t expected = (int64_t)(i + 1) * CHUNK_SAMPLES * 1000000 / SOUND_RATE_HZ;
-        // Six 240-frame DMA descriptors hold at most 90ms. Abort if the
-        // network has fallen beyond that headroom rather than upload PCM
-        // with undetected missing speech. No retries replay a user's audio.
-        if (elapsed > expected + 80000 || elapsed > (int64_t)(seconds + 2) * 1000000) err = ESP_ERR_TIMEOUT;
+// ---------------------------------------------------------------------------
+// Push-to-talk recorder. The audio task fills the caller's buffer with 8 kHz
+// IMA ADPCM; a worker may upload the bytes that are already published.
+// ---------------------------------------------------------------------------
+
+#define REC_DISCARD_CHUNKS 3      // stale DMA samples from before the press
+
+static uint8_t *s_rec_buf;
+static size_t s_rec_cap;
+static volatile size_t s_rec_len;
+static volatile bool s_rec_stop, s_rec_done;
+static volatile esp_err_t s_rec_err;
+static unsigned s_rec_skip;
+static voice_enc_t s_rec_enc;
+
+static void rec_finish(esp_err_t err) {
+    s_rec_err = err;
+    s_rec_on = false;
+    s_rec_done = true;
+}
+
+// One 20 ms step; called from the audio task with the I/O lock free.
+static void rec_step(void) {
+    if (s_rec_stop || s_rec_len + CHUNK_SAMPLES / 4 > s_rec_cap) {
+        rec_finish(ESP_OK);
+        return;
     }
+    if (xSemaphoreTake(s_io_lock, pdMS_TO_TICKS(20)) != pdTRUE) return;
+    esp_err_t err = bsp_audio_read(s_buf, sizeof(s_buf));
     xSemaphoreGive(s_io_lock);
-    return err;
+    if (err != ESP_OK) {
+        rec_finish(err);
+        return;
+    }
+    if (s_rec_skip) {
+        s_rec_skip--;
+        return;
+    }
+    size_t n = voice_enc_chunk(&s_rec_enc, s_buf, CHUNK_SAMPLES, s_rec_buf + s_rec_len);
+    s_rec_len += n;               // publish only after the bytes are written
+}
+
+bool app_audio_rec_start(uint8_t *buf, size_t cap) {
+    if (!s_audio_ok || !buf || cap < CHUNK_SAMPLES / 4 || s_rec_on) return false;
+    s_rec_buf = buf;
+    s_rec_cap = cap;
+    s_rec_len = 0;
+    s_rec_err = ESP_OK;
+    s_rec_skip = REC_DISCARD_CHUNKS;
+    s_rec_stop = false;
+    s_rec_done = false;
+    voice_enc_init(&s_rec_enc);
+    s_rec_on = true;
+    sound_id_t none = SOUND_NONE;
+    (void)xQueueSend(s_queue, &none, 0);    // wake the task
+    return true;
+}
+
+void app_audio_rec_stop(void) {
+    s_rec_stop = true;
+}
+
+size_t app_audio_rec_bytes(bool *done, esp_err_t *err) {
+    bool finished = s_rec_done;
+    if (done) *done = finished;
+    if (err) *err = finished ? s_rec_err : ESP_OK;
+    return s_rec_len;
 }

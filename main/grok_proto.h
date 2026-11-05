@@ -9,8 +9,6 @@
 #define GROK_BOT_MAX 65
 #define GROK_TEXT_MAX 192
 #define GROK_RESPONSE_MAX 2048
-#define GROK_VOICE_SECONDS 5
-#define GROK_VOICE_BYTES (16000 * 2 * GROK_VOICE_SECONDS)
 
 typedef struct {
     char url[GROK_URL_MAX];

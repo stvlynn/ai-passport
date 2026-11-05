@@ -105,7 +105,11 @@ test('voice rejects bad format/length, bounds jobs and reports missing webhook',
   const { request, device, voice } = await fixture(t, { transcribe: async (_pcm, _settings, signal) => new Promise(resolve => signal.addEventListener('abort', resolve)) });
   assert.equal((await request('/v1/voice?bot_id=lynn-test', { method: 'POST', headers: device, body: 'small' })).status, 415);
   assert.equal((await request('/v1/voice?bot_id=lynn-test', { method: 'POST', headers: { ...device, 'Content-Type': 'audio/pcm;rate=16000;channels=1;format=s16le' }, body: Buffer.alloc(4) })).status, 400);
-  for (let n = 0; n < 3; n++) assert.equal((await voice()).status, 202);
+  const adpcm = Buffer.alloc(20004); adpcm.writeUInt32LE(16000, 20000);
+  const adpcmHeaders = { ...device, 'Content-Type': 'audio/ima-adpcm;rate=8000;channels=1' };
+  assert.equal((await request('/v1/voice?bot_id=lynn-test', { method: 'POST', headers: adpcmHeaders, body: Buffer.alloc(20004) })).status, 400);
+  assert.equal((await request('/v1/voice?bot_id=lynn-test', { method: 'POST', headers: adpcmHeaders, body: adpcm })).status, 202);
+  for (let n = 0; n < 2; n++) assert.equal((await voice()).status, 202);
   assert.equal((await voice()).status, 429);
   const notReady = await fixture(t, {}, { webhookURL: undefined, webhookKey: undefined });
   assert.equal((await notReady.voice()).status, 503);

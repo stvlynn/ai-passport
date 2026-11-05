@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { EventQueue, PublicError } from './events.js';
 import { actions, actionById, tools } from './catalog.js';
 import { transcribe, dispatchWebhook } from './asr.js';
+import { VOICE_BODY_BYTES, VOICE_CONTENT_TYPE, voiceBodyToPcm } from './adpcm.js';
 
 const versions = ['2025-03-26', '2025-06-18', '2025-11-25'];
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -152,10 +153,20 @@ export function createConnector(config, dependencies = {}) {
       rate('voice', 6);
       if (!config.webhookURL || !config.webhookKey) fail(503, 'not_ready');
       if (stopping || jobs.length + Number(active) >= 3) fail(429, 'voice_queue_full');
-      if ((request.headers['content-type'] ?? '').replaceAll(' ', '').toLowerCase() !== 'audio/pcm;rate=16000;channels=1;format=s16le') fail(415, 'unsupported_audio');
-      if (request.headers['content-length'] !== '160000' || request.headers['transfer-encoding']) fail(400, 'invalid_audio_length');
-      const pcm = await body(request, 160000);
-      if (pcm.length !== 160000) fail(400, 'invalid_audio_length');
+      const type = (request.headers['content-type'] ?? '').replaceAll(' ', '').toLowerCase();
+      if (request.headers['transfer-encoding']) fail(400, 'invalid_audio_length');
+      let pcm;
+      if (type === 'audio/pcm;rate=16000;channels=1;format=s16le') {
+        // Fixed five-second raw PCM (original protocol).
+        if (request.headers['content-length'] !== '160000') fail(400, 'invalid_audio_length');
+        pcm = await body(request, 160000);
+        if (pcm.length !== 160000) fail(400, 'invalid_audio_length');
+      } else if (type === VOICE_CONTENT_TYPE) {
+        // Push-to-talk: fixed-size ADPCM body with a sample-count trailer (0.3-5 s).
+        if (request.headers['content-length'] !== String(VOICE_BODY_BYTES)) fail(400, 'invalid_audio_length');
+        pcm = voiceBodyToPcm(await body(request, VOICE_BODY_BYTES));
+        if (!pcm) fail(400, 'invalid_audio_length');
+      } else fail(415, 'unsupported_audio');
       if (jobs.length + Number(active) >= 3) fail(429, 'voice_queue_full');
       jobs.push({ id: requestId, pcm }); send(202, { request_id: requestId }); void run();
     } catch (error) {

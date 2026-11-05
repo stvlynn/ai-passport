@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef void (*app_audio_clap_cb_t)(void);
 
@@ -18,8 +19,11 @@ void app_audio_set_enabled(bool sound_on);
 // 打开后任务在空闲时持续读取麦克风;播放音效期间自动暂停检测。
 void app_audio_set_listening(bool listen);
 
-// Worker-only, synchronous streaming capture. Each callback receives 20ms of
-// 16kHz mono signed little-endian PCM. No full utterance is allocated. Playback
-// and clap detection pause while capturing. A slow/failed sink aborts capture.
-typedef esp_err_t (*app_audio_sink_t)(const void *pcm, size_t bytes, void *arg);
-esp_err_t app_audio_capture(app_audio_sink_t sink, void *arg, unsigned seconds);
+// Push-to-talk recorder. rec_start begins capturing immediately into buf as
+// 8 kHz IMA ADPCM (voice_codec.h); recording ends on rec_stop, when buf is full
+// or on a read error. buf must stay valid until rec_bytes reports done.
+// Playback and clap detection pause while recording.
+bool app_audio_rec_start(uint8_t *buf, size_t cap);
+void app_audio_rec_stop(void);
+// Bytes already encoded (safe to upload). done/err report completion.
+size_t app_audio_rec_bytes(bool *done, esp_err_t *err);
