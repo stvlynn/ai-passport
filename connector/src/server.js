@@ -3,6 +3,7 @@ import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ConversationStore } from './conversation.js';
 import { EventQueue, PublicError } from './events.js';
 import { actions, actionById, tools } from './catalog.js';
 import { transcribe, dispatchWebhook } from './asr.js';
@@ -51,6 +52,7 @@ async function body(request, max) {
 export function createConnector(config, dependencies = {}) {
   validateConfig(config);
   const queue = new EventQueue(config.stateDir, dependencies.queueOptions);
+  const conversation = new ConversationStore(config.stateDir, config.botId);
   const asr = dependencies.transcribe ?? transcribe, webhook = dependencies.dispatchWebhook ?? dispatchWebhook;
   const logger = dependencies.logger ?? (entry => process.stdout.write(`${JSON.stringify(entry)}\n`));
   const controller = new AbortController();
@@ -67,10 +69,14 @@ export function createConnector(config, dependencies = {}) {
     try {
       const text = await asr(job.pcm, config.asr, controller.signal);
       recent = { request_id: job.id, status: 'dispatching' };
-      await webhook(config, text, job.id, controller.signal);
+      const context = conversation.begin(job.id, text);
+      await webhook(config, text, job.id, controller.signal, context);
+      conversation.status(job.id, 'dispatched');
       recent = { request_id: job.id, status: 'accepted_by_grok' };
       logger({ event: 'voice_dispatched', request_id: job.id });
     } catch {
+      // A network error may occur after upstream acceptance; never retry it.
+      if (recent?.status === 'dispatching') { try { conversation.status(job.id, 'uncertain'); } catch {} }
       recent = { request_id: job.id, status: 'failed' };
       logger({ event: 'voice_failed', request_id: job.id });
       if (!stopping) { try { queue.enqueue('text', 'Voice request failed. Please try again.'); } catch { /* bounded queue may be full */ } }
@@ -86,24 +92,45 @@ export function createConnector(config, dependencies = {}) {
     const error = (code, text) => ({ jsonrpc: '2.0', id: message.id, error: { code, message: text } });
     if (message.params !== undefined && !record(message.params)) return error(-32602, 'Invalid params');
     switch (message.method) {
-      case 'initialize': return result({ protocolVersion: versions.includes(message.params?.protocolVersion) ? message.params.protocolVersion : versions.at(-1), capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'ai-passport-lynn', version: '1.0.0' }, instructions: 'You are Lynn. Use lynn_say or an action tool with text for every device-facing reply. Routine webhook acceptance does not deliver your normal chat output to the device.' });
+      case 'initialize': return result({ protocolVersion: versions.includes(message.params?.protocolVersion) ? message.params.protocolVersion : versions.at(-1), capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'ai-passport-lynn', version: '1.1.0' }, instructions: 'You are Lynn. Use lynn_say or an action tool with text for every device-facing reply. Echo the webhook request_id in reply tools. Recall context with lynn_context, and store user-provided preferences with lynn_remember. Routine webhook acceptance does not deliver your normal chat output to the device.' });
       case 'ping': return result({});
       case 'tools/list': return result({ tools });
       case 'tools/call': {
         const name = message.params?.name, args = message.params?.arguments ?? {};
         const tool = tools.find(candidate => candidate.name === name);
         if (!tool) return error(-32602, 'Unknown tool');
-        if (!record(args) || Object.keys(args).some(key => key !== 'text') || (args.text !== undefined && (typeof args.text !== 'string' || args.text.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(args.text)))) return error(-32602, 'Invalid tool arguments');
-        if ((name === 'lynn_list_actions' || name === 'lynn_status') && Object.keys(args).length) return error(-32602, 'Unexpected arguments');
+        if (!record(args)) return error(-32602, 'Invalid tool arguments');
+        const allowed = name === 'lynn_remember' ? ['key', 'text'] : name === 'lynn_memory_search' ? ['query'] : (name === 'lynn_say' || name.startsWith('lynn_action_')) ? ['text', 'request_id'] : [];
+        if (Object.keys(args).some(key => !allowed.includes(key)) || Object.values(args).some(value => typeof value !== 'string' || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) || (args.text?.length ?? 0) > 4000 || (args.query?.length ?? 0) > 200 || (args.request_id !== undefined && !/^[a-zA-Z0-9_-]{1,128}$/.test(args.request_id))) return error(-32602, 'Invalid tool arguments');
         let payload;
         try {
-          if (name === 'lynn_list_actions') payload = { actions };
-          else if (name === 'lynn_status') payload = { bot_id: config.botId, queued_events: queue.pending, voice_jobs: jobs.length + Number(active), recent_voice: recent };
+          if (name === 'lynn_context') payload = conversation.context();
+          else if (name === 'lynn_memory_search') payload = { memories: conversation.getMemory(args.query ?? '') };
+          else if (name === 'lynn_remember') payload = conversation.remember(args.key, args.text);
+          else if (name === 'lynn_list_actions') payload = { actions };
+          else if (name === 'lynn_status') payload = { bot_id: config.botId, queued_events: queue.pending, voice_jobs: jobs.length + Number(active), recent_voice: recent, conversation_id: conversation.context().conversation_id };
           else {
             if (name === 'lynn_say' && !args.text?.trim()) return error(-32602, 'Text is required');
             const action = name.startsWith('lynn_action_') ? name.slice('lynn_action_'.length) : undefined;
             if (action && !actionById.has(action)) return error(-32602, 'Unknown action');
-            payload = { queued: true, event_ids: queue.enqueue(action ? 'action' : 'text', args.text, action), ...(typeof message.params?._meta?.request_id === 'string' ? { request_id: message.params._meta.request_id.slice(0, 128) } : {}) };
+            // Old Grok tool catalogs may cache the text-only schema. A strict
+            // explicit routing tag keeps correlation safe until rediscovery.
+            const tag = /^\[request_id=([a-zA-Z0-9_-]{1,128})\]\s*/.exec(args.text ?? '');
+            const text = tag ? args.text.slice(tag[0].length) : args.text;
+            if (tag && args.request_id && tag[1] !== args.request_id) throw new PublicError(400, 'conflicting_request_id');
+            if (name === 'lynn_say' && !text?.trim()) return error(-32602, 'Text is required');
+            const suppliedRequestId = args.request_id ?? tag?.[1] ?? message.params?._meta?.request_id;
+            const requestId = conversation.resolveRequest(suppliedRequestId);
+            if (requestId && !suppliedRequestId) throw new PublicError(409, 'request_id_required');
+            if (requestId && text && conversation.hasReply(requestId, text)) {
+              payload = { queued: false, duplicate: true, request_id: requestId };
+            } else {
+              // Validate memory limits before publishing the reply to the device.
+              if (requestId && text) conversation.validateReply(requestId, text);
+              const eventIds = queue.enqueue(action ? 'action' : 'text', text, action);
+              if (requestId && text) conversation.appendReply(requestId, text);
+              payload = { queued: true, event_ids: eventIds, ...(requestId ? { request_id: requestId } : {}) };
+            }
           }
           return result({ content: [{ type: 'text', text: JSON.stringify(payload) }], isError: false });
         } catch (caught) {

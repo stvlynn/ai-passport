@@ -57,10 +57,24 @@ Routine webhook 接收 Bearer 认证的 JSON POST，字段为 `text`、`request_
 
 无状态 JSON Streamable HTTP 接口支持 `initialize`、`ping`、`tools/list`、`tools/call` 和通知。它可协商 MCP `2025-03-26`、`2025-06-18` 或 `2025-11-25`；后续请求可提供 `MCP-Protocol-Version`。POST 客户端的 Accept 必须同时声明 `application/json` 和 `text/event-stream`。GET 和 DELETE 返回 405；服务使用 JSON 响应，不打开 SSE 流或会话。认证使用独立配置的 Bearer 工具令牌，不提供交互式 OAuth 发现。传输遵循 [MCP 官方规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)。
 
-`tools/list` 将所有 41 个动作公开为 `lynn_action_<id>`，附带目录描述和可选 `text`，另有 `lynn_say`、`lynn_list_actions`、`lynn_status`，共计 44 个工具。工具回复表示已排队，而非动画已完成。每个文字参数最多 4000 个字符。动作 ID 和时长直接来自既有固件目录，不另行手写第二份列表。
+`tools/list` 将所有 41 个动作公开为 `lynn_action_<id>`，附带目录描述和可选 `text`，另有 `lynn_say`、`lynn_list_actions`、`lynn_status` 及下文三个记忆和上下文工具，共计 47 个工具。工具回复表示已排队，而非动画已完成。每个文字参数最多 4000 个字符。动作 ID 和时长直接来自既有固件目录，不另行手写第二份列表。
 
 运行 `cd connector && npm test`。测试涵盖所有 41 个工具、令牌隔离、Host/Origin 检查、Bot/游标校验、正文大小限制、异步语音分发、webhook 失败、伪 ASR 子进程及超时、UTF-8 卡片、持久游标、过期和节奏控制。回环集成测试需要本机监听权限。测试不证明生产隧道、Grok Routine 或物理设备有效；必须使用真实五秒录音和经工具送达的回复验证完整链路后，才能声称设备验收通过。
 
 ## 通信参考
 
 入站通信使用[官方 Grok Bot Routine Webhook](https://docs.x.ai/grok-bot/skills-routines-and-automations#webhooks)。社区项目 [rthomas24/grok-bot-mcp](https://github.com/rthomas24/grok-bot-mcp) 与 [Kargatharaakash/grok-bot-mcp](https://github.com/Kargatharaakash/grok-bot-mcp) 分别提供桌面自动化与后端接入参考。这些项目仍较新，不能作为生产成熟度的证据。本连接器不依赖它们的界面自动化、私有接口或桌面账户凭据提取。
+
+## 连续语音对话与记忆
+
+1.1 版将用户转写和工具回传的完整助手回复保存到私密 `state/conversation.json`（目录 0700，原子写入文件 0600）。重启、重新安装以及设备事件队列初始化均保留记录；屏幕队列不再充当会话档案。音频仍为临时文件。不会导入已有 Grok 原生聊天记录或此前设备对话。
+
+每次语音 Webhook 附带固定 `conversation_id`、当前 `request_id`、原始 `user_text`、最近问答 `context`、滚动摘录 `summary` 与已保存的 `memories`。`text` 字段也包含这些上下文和当前话语，因此只读取 `text` 的旧 routine 仍能衔接对话。这些字段属于应用协议，不代表选择了 Grok 原生会话。历史是引用数据，不能覆盖 Bot 规则。仅记录工具实际回传的文本回复，不把 Webhook 接受或错误提示当成助手回答。
+
+回复时通过 `lynn_say` 或任意 `lynn_action_*` 同时传入 `text` 与 Webhook 的 `request_id`。升级后刷新 MCP 工具发现。存在待回复语音时，不带关联 ID 的调用返回 `request_id_required`，需携带原 ID 重试。未知、过期或有歧义的请求会失败，避免归档到错误轮次。同一请求的相同文本不会重复入队。没有待处理语音时，手动调用仍可使用，但不会虚构用户轮次。分段回复继续使用同一请求 ID。缓存中的旧版纯文本工具可发送 `[request_id=ID]回复`，连接器会在显示与保存前去除该明确路由前缀。
+
+新增工具为 `lynn_context`（读取最近问答、滚动摘录和记忆）、`lynn_memory_search`（可选 `query`，留空列出已保存条目）、`lynn_remember`（`key` 和 `text`，相同 key 替换）。只记住用户明确提供的事实与偏好。这些工具补充 Bot 自身记忆，不读取 Grok 内部记忆库。
+
+保存最多 48 轮完整问答，Webhook 最近上下文最多 12 轮，滚动摘录最多 4000 字符，长期条目最多 32 条、每条 1000 字符。Webhook 快照上限为 20000 个 JSON 字符。摘录只是旧对话的有界引用，不是模型推断或生成的摘要；更早摘录会逐渐淘汰，因此并非无限历史。待回复请求十分钟过期。如果 48 个未过期、未完成请求占满存储，新请求会失败，而非覆盖活跃上下文。状态文件损坏或 Bot ID 不匹配会阻止启动，应恢复私密状态，不能悄悄重置。需要保留连续性时，请将此文件纳入本机备份并保持私密。
+
+验收方式：告诉 Lynn 一个临时事实，不重复该事实追问；重启连接器后再次追问；初始化设备事件游标，确认上下文仍存在。并发语音必须按各自 ID 保存回复。单元和集成测试覆盖这些边界；实体屏幕、麦克风仍需单独验证。

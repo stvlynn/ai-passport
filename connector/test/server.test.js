@@ -44,7 +44,7 @@ test('MCP initialize/list/each action/say/status/ping and stateless transport', 
   const { rpc, queue, request, config } = await fixture(t);
   const initialize = await (await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } })).json();
   assert.equal(initialize.result.protocolVersion, '2025-06-18');
-  assert.equal((await (await rpc('tools/list')).json()).result.tools.length, 44);
+  assert.equal((await (await rpc('tools/list')).json()).result.tools.length, 47);
   assert.equal(actions.length, 41);
   for (const action of actions) {
     const reply = await (await rpc('tools/call', { name: `lynn_action_${action.id}`, arguments: { text: `Perform ${action.id}` } })).json();
@@ -86,7 +86,7 @@ test('async voice returns202, dispatches transcript with correlation and waits f
   assert.equal(queue.pending, 0);
   assert.ok(logs.some(entry => entry.event === 'voice_dispatched' && entry.request_id === request_id));
   const initial = await (await request('/v1/events?bot_id=lynn-test&after=0', { headers: device })).json();
-  await rpc('tools/call', { name: 'lynn_say', arguments: { text: 'Hello from Lynn' } });
+  await rpc('tools/call', { name: 'lynn_say', arguments: { text: 'Hello from Lynn', request_id } });
   const events = await (await request(`/v1/events?bot_id=lynn-test&after=${initial.cursor}`, { headers: device })).json();
   assert.equal(events.events[0].text, 'Hello from Lynn');
 });
@@ -118,4 +118,58 @@ test('voice rejects bad format/length, bounds jobs and reports missing webhook',
 test('configuration rejects weak/equal tokens, unsafe webhook and ASR command', async t => {
   const { config } = await fixture(t);
   for (const override of [{ toolToken: config.deviceToken }, { deviceToken: 'short' }, { webhookURL: 'http://example.com' }, { asr: { command: 'whisper', args: ['{input}'] } }]) assert.throws(() => validateConfig({ ...config, ...override }));
+});
+
+async function until(check) {
+  for (let n = 0; n < 100; n++) { const value = await check(); if (value) return value; await delay(5); }
+  throw new Error('test wait expired');
+}
+async function tool(rpc, name, args = {}) {
+  const result = (await (await rpc('tools/call', { name, arguments: args })).json()).result;
+  if (result.isError) return { error: result.content[0].text };
+  return JSON.parse(result.content[0].text);
+}
+
+test('voice follow-ups carry completed history; memory survives event initialization', async t => {
+  const sent = []; let utterance = '我叫小明';
+  const { voice, rpc, request, device } = await fixture(t, { transcribe: async () => utterance, dispatchWebhook: async (...args) => sent.push(args) });
+  const first = await (await voice()).json();
+  await until(() => sent.length === 1);
+  assert.deepEqual(sent[0][4].context, []);
+  assert.equal((await tool(rpc, 'lynn_say', { text: '记住了，小明。', request_id: first.request_id })).queued, true);
+  assert.equal((await tool(rpc, 'lynn_say', { text: '记住了，小明。', request_id: first.request_id })).duplicate, true);
+  await tool(rpc, 'lynn_remember', { key: 'preferred_name', text: '用户说自己叫小明' });
+  await request('/v1/events?bot_id=lynn-test&after=0', { headers: device });
+  utterance = '我刚才说叫什么？';
+  await voice(); await until(() => sent.length === 2);
+  const context = sent[1][4];
+  assert.equal(context.conversation_id, sent[0][4].conversation_id);
+  assert.equal(context.context[0].user, '我叫小明');
+  assert.ok(context.context[0].assistant.includes('记住了，小明。'));
+  assert.equal(context.memories[0].key, 'preferred_name');
+  assert.equal((await tool(rpc, 'lynn_memory_search', { query: '小明' })).memories.length, 1);
+});
+
+test('overlapping voice requests reject ambiguous legacy replies and correlate explicit IDs', async t => {
+  const sent = [];
+  const { voice, rpc } = await fixture(t, { dispatchWebhook: async (...args) => sent.push(args) });
+  const first = await (await voice()).json(); await until(() => sent.length === 1);
+  const second = await (await voice()).json(); await until(() => sent.length === 2);
+  assert.equal((await tool(rpc, 'lynn_say', { text: 'ambiguous' })).error, 'request_id_required');
+  assert.equal((await tool(rpc, 'lynn_say', { text: 'first reply', request_id: first.request_id })).queued, true);
+  assert.equal((await tool(rpc, 'lynn_say', { text: 'second reply', request_id: second.request_id })).queued, true);
+  assert.equal((await tool(rpc, 'lynn_say', { text: 'unknown reply', request_id: 'missing' })).error, 'unknown_request');
+  const context = await tool(rpc, 'lynn_context');
+  assert.ok(context.context[0].assistant.includes('first reply'));
+  assert.ok(context.context[1].assistant.includes('second reply'));
+});
+
+test('cached text-only tools route an explicit request tag without displaying it', async t => {
+  let dispatched = false;
+  const { rpc, voice, queue } = await fixture(t, { dispatchWebhook: async () => { dispatched = true; } });
+  const { request_id } = await (await voice()).json(); await until(() => dispatched);
+  const result = await tool(rpc, 'lynn_say', { text: `[request_id=${request_id}]你好` });
+  assert.equal(result.request_id, request_id);
+  assert.equal(queue.state.events.at(-1).event.text, '你好');
+  assert.equal((await tool(rpc, 'lynn_context')).context[0].assistant, '你好');
 });
