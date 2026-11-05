@@ -14,13 +14,13 @@ She has 10 idle activities and 31 interactions. Between activities she breathes,
 
 | Input | Action |
 | --- | --- |
-| OK click or double click | A random interaction |
-| OK long press, UP/DOWN long press | Head pat |
+| OK click, double click or long press | Record five seconds of speech for Lynn |
+| UP/DOWN long press | No action on this page |
 | UP / DOWN | Previous / next page |
 
 ## Agent tools
 
-Every action is an agent tool. [`lynn-tools.json`](lynn-tools.json) contains tool definitions (`lynn_play_action`, `lynn_say`, `lynn_list_actions`, `lynn_status`) with JSON input schemas and the full action list. Until a network bridge exists, a host agent calls them through the USB serial console, one command per line:
+Every action is an agent tool. [`lynn-tools.json`](lynn-tools.json) contains tool definitions (`lynn_play_action`, `lynn_say`, `lynn_list_actions`, `lynn_status`) with JSON input schemas and the full action list. The [Grok connector](../connector/README.md) exposes all 41 actions as individual MCP tools and accepts voice uploads. Network events apply only on the awake Lynn page. A host agent can also use the USB serial console, one command per line:
 
 | Tool | Serial command |
 | --- | --- |
@@ -29,7 +29,7 @@ Every action is an agent tool. [`lynn-tools.json`](lynn-tools.json) contains too
 | `lynn_list_actions` | `lynn list` |
 | `lynn_status` | `lynn status` |
 
-Playing an action or changing the line switches the device to the Lynn page and wakes the screen. Lines are UTF-8, up to about 30 characters; characters outside the 12 px font (GB2312 level 1 and ASCII) show as placeholder boxes.
+Serial commands switch to the Lynn page and wake the screen; network commands never switch pages. Lines are UTF-8, up to about 30 characters; characters outside the 12 px font (GB2312 level 1 and ASCII) show as placeholder boxes.
 
 ## Idle activities
 

@@ -26,8 +26,8 @@ warm paper and ink, with yellow reserved for today's new stars.
 | UP / DOWN | Previous / next page (wraps around) |
 | OK click / double click | Select the next / previous item on the page: the focus repository, a list row, or a Device menu item (wraps around) |
 | OK long press | Confirm. Device page: run the selected item. Other pages: sync now. Provisioning page: go back |
-| UP / DOWN long press | Overview or Lynn page: poke Lynn |
-| OK click / long press on the Lynn page | A random interaction / a head pat |
+| UP / DOWN long press | Overview: poke Lynn |
+| OK click / double click / long press on the Lynn page | Record five seconds of speech for Lynn |
 
 Pages run Lynn ⇄ Overview ⇄ Activity ⇄ Repositories ⇄ Device; the device starts on Overview.
 
@@ -150,3 +150,9 @@ and emoji, are drawn as LVGL placeholder boxes.
 The baseline hardware-test demo sources (`main/main.c`, `main/demo_*.c`, and
 `main/ui_pixel*`) remain in the tree for their host tests, but they are not
 part of this firmware build.
+
+## Grok Bot on the Lynn page
+
+Configure the HTTPS connector URL, device Bearer token and Lynn Bot ID in web setup. Press OK on the awake Lynn page and speak when Listening appears. The Mac transcribes the five-second recording locally and invokes Lynn through a Grok Bot routine webhook. Lynn replies using the connector MCP text and action tools; responses scroll in the speech card and no speech audio is played. All 41 actions are available individually. Other pages retain their controls. Leaving the Lynn page cancels recording and suspends event delivery; returning starts a fresh cursor without replaying old actions.
+
+See the [connector deployment guide](../connector/README.md) for authentication, tool registration, limits and verification. A running Tunnel alone does not confirm the Bot integration is ready.

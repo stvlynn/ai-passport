@@ -392,20 +392,20 @@ def write_docs(acts):
           'of loops, exit). Interactions interrupt her, play once and return to idle.', '',
           '## Controls', '',
           '| Input | Action |', '| --- | --- |',
-          '| OK click or double click | A random interaction |',
-          '| OK long press, UP/DOWN long press | Head pat |',
+          '| OK click, double click or long press | Record five seconds of speech for Lynn |',
+          '| UP/DOWN long press | No action on this page |',
           '| UP / DOWN | Previous / next page |', '',
           '## Agent tools', '',
           'Every action is an agent tool. [`lynn-tools.json`](lynn-tools.json) contains tool definitions '
           '(`lynn_play_action`, `lynn_say`, `lynn_list_actions`, `lynn_status`) with JSON input schemas and the '
-          'full action list. Until a network bridge exists, a host agent calls them through the USB serial '
+          'full action list. The [Grok connector](../connector/README.md) exposes all 41 actions as individual MCP tools and accepts voice uploads. Network events apply only on the awake Lynn page. A host agent can also use the USB serial '
           'console, one command per line:', '',
           '| Tool | Serial command |', '| --- | --- |',
           '| `lynn_play_action` | `lynn play <action> [line]` |',
           '| `lynn_say` | `lynn say <text>` |',
           '| `lynn_list_actions` | `lynn list` |',
           '| `lynn_status` | `lynn status` |', '',
-          'Playing an action or changing the line switches the device to the Lynn page and wakes the screen. '
+          'Serial commands switch to the Lynn page and wake the screen; network commands never switch pages. '
           'Lines are UTF-8, up to about 30 characters; characters outside the 12 px font (GB2312 level 1 and '
           'ASCII) show as placeholder boxes.', '',
           '## Idle activities', '', '| Id | Description | Seconds (one loop) |', '| --- | --- | --- |']
@@ -427,15 +427,15 @@ def write_docs(acts):
           f'她有 {len(idle)} 个待机活动和 {len(inter)} 个互动动作。活动之间她会呼吸、眨眼、左右张望；每隔 8~15 秒'
           '随机开始一个待机活动（进入、随机循环若干次、退出）。互动动作会打断她，播放一次后回到待机。', '',
           '## 按键', '', '| 输入 | 动作 |', '| --- | --- |',
-          '| 确定单击或双击 | 随机一个互动 |', '| 确定长按、上/下长按 | 摸头 |', '| 上 / 下 | 上一页 / 下一页 |', '',
+          '| 确定单击、双击或长按 | 录制五秒语音发给 Lynn |', '| 上/下长按 | 本页无动作 |', '| 上 / 下 | 上一页 / 下一页 |', '',
           '## Agent 工具', '',
           '每个动作都是 agent 工具。[`lynn-tools.json`](lynn-tools.json) 包含工具定义（`lynn_play_action`、'
-          '`lynn_say`、`lynn_list_actions`、`lynn_status`）、JSON 输入结构和完整动作列表。在网络桥接完成之前，'
-          '电脑上的 agent 通过 USB 串口调用它们，每行一条命令：', '',
+          '`lynn_say`、`lynn_list_actions`、`lynn_status`）、JSON 输入结构和完整动作列表。[Grok 连接器](../connector/README.zh_CN.md) 将全部 41 个动作注册为独立 MCP 工具并接收语音上传。网络事件仅在亮屏的 Lynn 页应用。'
+          '电脑上的 agent 也可通过 USB 串口调用，每行一条命令：', '',
           '| 工具 | 串口命令 |', '| --- | --- |',
           '| `lynn_play_action` | `lynn play <动作> [台词]` |', '| `lynn_say` | `lynn say <台词>` |',
           '| `lynn_list_actions` | `lynn list` |', '| `lynn_status` | `lynn status` |', '',
-          '播放动作或修改台词会把设备切到 Lynn 页并点亮屏幕。台词为 UTF-8，约 30 字以内；12 px 字体（GB2312 '
+          '串口命令会切到 Lynn 页并点亮屏幕；网络命令不会切换页面。台词为 UTF-8，约 30 字以内；12 px 字体（GB2312 '
           '一级汉字与 ASCII）以外的字符显示为占位方框。', '',
           '## 待机活动', '', '| Id | 名称 | 默认台词 | 秒（一轮） |', '| --- | --- | --- | --- |']
     zh += [f'| `{x["id"]}` | {x["name"]} | {x["default_line"]} | {x["approx_seconds"]} |' for x in idle]

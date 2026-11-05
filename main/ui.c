@@ -11,6 +11,7 @@
 
 #include "lynn_anim.h"
 #include "lynn_stage.h"
+#include "grok_proto.h"
 
 #include "app_portal.h"
 #include "portal_proto.h"
@@ -709,6 +710,7 @@ static void refresh_system(const ui_model_t *m) {
 
 static lynn_stage_t s_stage;
 static bool s_stage_ready;
+static char s_bot_text[GROK_TEXT_MAX] = "Press OK: speak for 5 seconds";
 static uint16_t s_stage_buf[LYNN_STAGE_W * LYNN_STAGE_H];
 static int16_t s_stage_shown = -2;          // 卡片上显示的动作,变化时更新文字
 static uint32_t s_stage_clock;              // 已按真实时间推进到的 tick 起点(ms)
@@ -726,7 +728,7 @@ static void stage_ensure(void) {
 
 static void stage_card(void) {
     if (!s.stage_line) return;
-    lv_label_set_text(s.stage_line, lynn_stage_line(&s_stage));
+    lv_label_set_text(s.stage_line, s_bot_text);
     const char *kind = s_stage.action < 0 ? "" : lynn_stage_busy(&s_stage) ? "互动 · " : "待机 · ";
     lv_label_set_text_fmt(s.stage_cap, "%s%s", kind, lynn_stage_action_name(&s_stage));
     s_stage_shown = s_stage.action;
@@ -781,6 +783,7 @@ static void build_lynn(lv_obj_t *scr) {
     stage_ensure();
     lv_obj_t *c = card(scr, X0 - 4, 34, XW + 6, 36);
     s.stage_line = label(c, &ui_font_12, C_INK, 8, 4, XW - 10, "");
+    lv_label_set_long_mode(s.stage_line, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     s.stage_cap = label(c, &ui_font_12, C_MUTED, 8, 19, XW - 10, "");
     s.stage = lv_canvas_create(scr);
     lv_canvas_set_buffer(s.stage, s_stage_buf, LYNN_STAGE_W, LYNN_STAGE_H, LV_COLOR_FORMAT_RGB565);
@@ -814,7 +817,7 @@ static void stage_sync_idle(void) {
 
 bool ui_lynn_play(const char *id, const char *line) {
     stage_ensure();
-    if (line) lynn_stage_say(&s_stage, line);
+    if (line) { lynn_stage_say(&s_stage, line); ui_lynn_bot_text(line); }
     if (id) {
         if (lynn_stage_play(&s_stage, id) < 0) {
             if (line) lynn_stage_say(&s_stage, NULL);
@@ -830,6 +833,33 @@ bool ui_lynn_play(const char *id, const char *line) {
 void ui_lynn_say(const char *text) {
     stage_ensure();
     lynn_stage_say(&s_stage, text);
+    if (text) ui_lynn_bot_text(text);
+    stage_card();
+}
+
+// Unknown network glyphs have a deliberate visible replacement. The font
+// covers ASCII and GB2312 level-one Hanzi, not all Unicode/emoji.
+void ui_lynn_bot_text(const char *text) {
+    if (!text) return;
+    size_t out = 0;
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p && out + 1 < sizeof(s_bot_text)) {
+        const unsigned char *start = p;
+        uint32_t cp = *p++;
+        unsigned count = 0;
+        if (cp >= 0xf0) { cp &= 7; count = 3; }
+        else if (cp >= 0xe0) { cp &= 15; count = 2; }
+        else if (cp >= 0xc0) { cp &= 31; count = 1; }
+        while (count-- && *p) cp = (cp << 6) | (*p++ & 63);
+        lv_font_glyph_dsc_t glyph;
+        bool supported = cp != '\n' && lv_font_get_glyph_dsc(&ui_font_12, &glyph, cp, 0) && !glyph.is_placeholder;
+        size_t bytes = (size_t)(p - start);
+        if (supported && out + bytes < sizeof(s_bot_text)) {
+            memcpy(s_bot_text + out, start, bytes);
+            out += bytes;
+        } else s_bot_text[out++] = cp == '\n' ? ' ' : '?';
+    }
+    s_bot_text[out] = 0;
     stage_card();
 }
 

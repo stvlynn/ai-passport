@@ -61,13 +61,18 @@ run_static_checks() {
         tests/test_bsp_audio_recovery.c components/bsp/src/bsp_es8311_sleep_check.c \
         -o "${test_dir}/test_bsp_audio_recovery"
     "${test_dir}/test_bsp_audio_recovery"
+    local gc_sections="-Wl,--gc-sections"
+    if [[ "$(uname -s)" == Darwin ]]; then gc_sections="-Wl,-dead_strip"; fi
     for demo in audio low_power ble wifi; do
         "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
             -ffunction-sections -fdata-sections -Itests/demo_stubs -Imain \
-            "tests/test_demo_${demo}_runtime.c" -Wl,--gc-sections \
+            "tests/test_demo_${demo}_runtime.c" "${gc_sections}" \
             -o "${test_dir}/test_demo_${demo}_runtime"
         "${test_dir}/test_demo_${demo}_runtime"
     done
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/voice_stubs -Imain \
+        tests/test_app_voice_capture.c main/sound_synth.c -o "${test_dir}/test_app_voice_capture"
+    "${test_dir}/test_app_voice_capture"
     # Astra Monitor 应用逻辑:数据模型、GraphQL 解析(用 ESP-IDF 自带 cJSON)、导航、音效合成、配网协议。
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_gh_model.c main/gh_model.c -o "${test_dir}/test_gh_model"
@@ -93,6 +98,14 @@ run_static_checks() {
             tests/test_gh_parse.c main/gh_parse.c main/gh_model.c "${cjson_dir}/cJSON.c" \
             -o "${test_dir}/test_gh_parse"
         "${test_dir}/test_gh_parse" tests/fixtures/gh_graphql_sample.json
+        "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain -I"${cjson_dir}" \
+            tests/test_grok_proto.c main/grok_proto.c main/lynn_stage.c main/lynn_stage_data.c "${cjson_dir}/cJSON.c" \
+            -o "${test_dir}/test_grok_proto"
+        "${test_dir}/test_grok_proto"
+        "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/voice_stubs -Imain -I"${cjson_dir}" \
+            tests/test_app_grok_transport.c main/grok_proto.c main/lynn_stage.c main/lynn_stage_data.c "${cjson_dir}/cJSON.c" \
+            -o "${test_dir}/test_app_grok_transport"
+        "${test_dir}/test_app_grok_transport"
     else
         echo "SKIP test_gh_parse: IDF_PATH not set (needs ESP-IDF's bundled cJSON)" >&2
     fi

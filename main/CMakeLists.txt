@@ -8,6 +8,8 @@ idf_component_register(
          "portal_proto.c"
          "app_settings.c"
          "app_audio.c"
+         "app_grok.c"
+         "grok_proto.c"
          "app_console.c"
          "gh_model.c"
          "lynn_anim.c"

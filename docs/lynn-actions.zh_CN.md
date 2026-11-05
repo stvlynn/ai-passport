@@ -14,13 +14,13 @@ Lynn 页（总览左边）显示大尺寸全身 Lynn：64 像素栅格的像素�
 
 | 输入 | 动作 |
 | --- | --- |
-| 确定单击或双击 | 随机一个互动 |
-| 确定长按、上/下长按 | 摸头 |
+| 确定单击、双击或长按 | 录制五秒语音发给 Lynn |
+| 上/下长按 | 本页无动作 |
 | 上 / 下 | 上一页 / 下一页 |
 
 ## Agent 工具
 
-每个动作都是 agent 工具。[`lynn-tools.json`](lynn-tools.json) 包含工具定义（`lynn_play_action`、`lynn_say`、`lynn_list_actions`、`lynn_status`）、JSON 输入结构和完整动作列表。在网络桥接完成之前，电脑上的 agent 通过 USB 串口调用它们，每行一条命令：
+每个动作都是 agent 工具。[`lynn-tools.json`](lynn-tools.json) 包含工具定义（`lynn_play_action`、`lynn_say`、`lynn_list_actions`、`lynn_status`）、JSON 输入结构和完整动作列表。[Grok 连接器](../connector/README.zh_CN.md) 将全部 41 个动作注册为独立 MCP 工具并接收语音上传。网络事件仅在亮屏的 Lynn 页应用。电脑上的 agent 也可通过 USB 串口调用，每行一条命令：
 
 | 工具 | 串口命令 |
 | --- | --- |
@@ -29,7 +29,7 @@ Lynn 页（总览左边）显示大尺寸全身 Lynn：64 像素栅格的像素�
 | `lynn_list_actions` | `lynn list` |
 | `lynn_status` | `lynn status` |
 
-播放动作或修改台词会把设备切到 Lynn 页并点亮屏幕。台词为 UTF-8，约 30 字以内；12 px 字体（GB2312 一级汉字与 ASCII）以外的字符显示为占位方框。
+串口命令会切到 Lynn 页并点亮屏幕；网络命令不会切换页面。台词为 UTF-8，约 30 字以内；12 px 字体（GB2312 一级汉字与 ASCII）以外的字符显示为占位方框。
 
 ## 待机活动
 

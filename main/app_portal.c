@@ -17,7 +17,7 @@
 
 static const char *TAG = "portal";
 
-#define BODY_MAX 1024
+#define BODY_MAX 2048
 
 static httpd_handle_t s_http;
 static TaskHandle_t s_dns_task;
@@ -83,7 +83,7 @@ static esp_err_t page_get(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr_chunk(req, PAGE_HEAD);
-    httpd_resp_sendstr_chunk(req, "<h1>Astra Monitor</h1><p>为设备连接 Wi-Fi,并填写 GitHub token。设备 MAC ");
+    httpd_resp_sendstr_chunk(req, "<h1>Astra Monitor</h1><p>为设备连接 Wi-Fi,并设置 Lynn 的 Grok Bot connector。设备 MAC ");
     send_escaped(req, st.mac);
     httpd_resp_sendstr_chunk(req, "</p><form class=card method=post action=/save>"
                                   "<label for=ssid>Wi-Fi 名称</label>"
@@ -109,6 +109,19 @@ static esp_err_t page_get(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req, app_settings_has_token()
         ? "<small>设备上已有 token,留空则保持不变</small>"
         : "<small>只读权限即可:Metadata、Issues、Pull requests</small>");
+    grok_config_t grok;
+    bool configured = app_settings_grok(&grok);
+    httpd_resp_sendstr_chunk(req, "<label for=connector_url>Connector 公网 HTTPS URL</label>"
+        "<input id=connector_url name=connector_url type=url maxlength=255 placeholder='https://connector.example.com' value=\"");
+    send_escaped(req, grok.url);
+    httpd_resp_sendstr_chunk(req, "\"><label for=connector_token>Connector Bearer token</label>"
+        "<input id=connector_token name=connector_token type=password maxlength=191 autocomplete=off>"
+        "<small>留空保留已有 token;此处填写 connector token,不是 Grok API key</small>"
+        "<label for=bot_id>Grok Bot ID</label>"
+        "<input id=bot_id name=bot_id maxlength=64 value=\"");
+    send_escaped(req, grok.bot);
+    httpd_resp_sendstr_chunk(req, configured ? "\"><small>Connector 已配置</small>" : "\"><small>三个字段首次需全部填写</small>");
+    memset(&grok, 0, sizeof(grok));
     httpd_resp_sendstr_chunk(req, "<button type=submit>保存并连接</button></form>");
     httpd_resp_sendstr_chunk(req, PAGE_TAIL);
     return httpd_resp_sendstr_chunk(req, NULL);
@@ -148,6 +161,20 @@ static esp_err_t save_post(httpd_req_t *req) {
     bool ok = portal_form_get(body, "ssid", ssid, sizeof(ssid)) &&
               portal_form_get(body, "pass", pass, sizeof(pass)) &&
               portal_form_get(body, "token", token, sizeof(token));
+    grok_config_t grok;
+    app_settings_grok(&grok);
+    char connector_url[GROK_URL_MAX] = "", connector_token[GROK_TOKEN_MAX] = "", bot[GROK_BOT_MAX] = "";
+    // Missing optional connector fields keep compatibility with old saved forms.
+    bool connector_fields = strstr(body, "connector_url=") || strstr(body, "connector_token=") || strstr(body, "bot_id=");
+    if (connector_fields) {
+        ok = ok && portal_form_get(body, "connector_url", connector_url, sizeof(connector_url)) &&
+             portal_form_get(body, "connector_token", connector_token, sizeof(connector_token)) &&
+             portal_form_get(body, "bot_id", bot, sizeof(bot));
+    }
+    bool grok_update = connector_url[0] || connector_token[0] || bot[0];
+    if (connector_url[0]) strlcpy(grok.url, connector_url, sizeof(grok.url));
+    if (connector_token[0]) strlcpy(grok.token, connector_token, sizeof(grok.token));
+    if (bot[0]) strlcpy(grok.bot, bot, sizeof(grok.bot));
     memset(body, 0, sizeof(body));
 
     esp_err_t res;
@@ -156,27 +183,31 @@ static esp_err_t save_post(httpd_req_t *req) {
     } else if (token[0] && !portal_token_valid(token)) {
         res = reply(req, "400 Bad Request", "token 格式不对",
                     "应为 github_pat_ 或 ghp_ 开头,只含字母、数字和下划线。");
-    } else if (!ssid[0] && !token[0]) {
-        res = reply(req, "400 Bad Request", "没有可保存的内容", "请填写 Wi-Fi 或 token。");
+    } else if (grok_update && !grok_config_valid(&grok)) {
+        res = reply(req, "400 Bad Request", "Connector 设置不完整", "请填写公网 HTTPS URL、Bearer token 和 Bot ID。URL 不含查询参数、片段或用户名。");
+    } else if (!ssid[0] && !token[0] && !grok_update) {
+        res = reply(req, "400 Bad Request", "没有可保存的内容", "请填写 Wi-Fi、token 或 connector。");
     } else if (pass[0] && strlen(pass) < 8) {
         res = reply(req, "400 Bad Request", "Wi-Fi 密码太短", "WPA2 密码至少 8 位;开放网络请留空。");
     } else {
-        if (token[0]) {
-            esp_err_t e = app_settings_set_token(token);
-            ESP_LOGI(TAG, "token 已更新: %s", esp_err_to_name(e));
-        }
-        if (ssid[0]) {
+        esp_err_t saved = grok_update ? app_settings_set_grok(&grok) : ESP_OK;
+        if (saved == ESP_OK && token[0]) saved = app_settings_set_token(token);
+        if (saved != ESP_OK) {
+            res = reply(req, "500 Internal Server Error", "保存失败", "设备存储暂时不可用,请重试。");
+        } else if (ssid[0]) {
             esp_err_t e = app_net_try_credentials(ssid, pass);
             ESP_LOGI(TAG, "试连 Wi-Fi: %s", esp_err_to_name(e));
             res = e == ESP_OK
                 ? reply(req, "200 OK", "正在连接", "请看设备屏幕上的结果。连接成功后热点会自动关闭;失败可回到本页重试。")
                 : reply(req, "409 Conflict", "暂时无法连接", "设备正在试连上一个网络,请稍候再提交。");
         } else {
-            res = reply(req, "200 OK", "token 已保存", "设备会在联网后自动同步。");
+            res = reply(req, "200 OK", "设置已保存", "返回 Lynn 页按 OK 说话;设备会在联网后连接 connector。");
         }
     }
     memset(pass, 0, sizeof(pass));
     memset(token, 0, sizeof(token));
+    memset(connector_token, 0, sizeof(connector_token));
+    memset(&grok, 0, sizeof(grok));
     return res;
 }
 

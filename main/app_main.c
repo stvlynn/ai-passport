@@ -11,6 +11,7 @@
 // 不参与本应用的构建,仅为宿主测试与参考保留。
 #include "app_audio.h"
 #include "app_console.h"
+#include "app_grok.h"
 #include "app_nav.h"
 #include "app_net.h"
 #include "app_settings.h"
@@ -65,6 +66,7 @@ typedef struct {
 
 static QueueHandle_t s_events;
 static TaskHandle_t s_sync_task;
+static QueueHandle_t s_grok_events;
 
 // sync → app 的交接区
 static SemaphoreHandle_t s_handoff_lock;
@@ -105,6 +107,16 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
     }
 }
 
+static bool on_grok(const grok_event_t *event) {
+    return xQueueSend(s_grok_events, event, 0) == pdTRUE;
+}
+
+static void on_grok_status(const char *text) {
+    grok_event_t event = { .present = true };
+    strlcpy(event.text, text, sizeof(event.text));
+    on_grok(&event);
+}
+
 static void on_net(void) {
     post(EV_NET, 0, 0);
 }
@@ -135,8 +147,10 @@ static void sync_task(void *arg) {
             detail[0] = '\0';
         } else {
             post(EV_SYNC_START, 0, 0);
+            app_grok_network_lock();
             r = gh_fetch_snapshot(CONFIG_ASTRA_GH_ORG, token, (int64_t)time(NULL), &buf,
                                   detail, sizeof(detail));
+            app_grok_network_unlock();
         }
         memset(token, 0, sizeof(token));
         xSemaphoreTake(s_handoff_lock, portMAX_DELAY);
@@ -221,6 +235,7 @@ static void refresh_model(void) {
     int64_t next = CONFIG_ASTRA_REFRESH_SECONDS - (now_ms() - s_last_sync_ms) / 1000;
     s_model.next_sync_in_s = next < 0 ? 0 : next;
     s_model.idle = (uint8_t)s_nav.idle;
+    app_grok_set_active(!s_provisioning && s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE);
     update_today();
 }
 
@@ -383,14 +398,6 @@ static app_key_t map_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     return APP_KEY_OK;
 }
 
-// Lynn 页:播放动作(id 为 NULL 时随机一个互动)。
-static void lynn_play(const char *id) {
-    if (!bsp_lvgl_lock(500)) return;
-    bool ok = ui_lynn_play(id, NULL);
-    bsp_lvgl_unlock();
-    if (ok) app_audio_play(SOUND_TICK);
-}
-
 // 串口 / agent 工具命令(在 console 任务中执行)。
 static bool on_lynn_cmd(const char *verb, const char *arg, const char *line, char *out, size_t cap) {
     if (!bsp_lvgl_lock(500)) return false;
@@ -417,10 +424,7 @@ static void poke_lynn(void) {
         return;
     }
     if (s_provisioning) return;
-    if (s_nav.page == APP_PAGE_LYNN) {
-        lynn_play("pat");
-        return;
-    }
+    if (s_nav.page == APP_PAGE_LYNN) return;
     if (s_nav.page != APP_PAGE_HOME) return;
     refresh_model();
     if (!bsp_lvgl_lock(500)) return;
@@ -440,11 +444,11 @@ static void handle_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
         if (key == APP_KEY_OK_LONG) provisioning_exit();
         return;
     }
-    // Lynn 页:确定单击/双击 = 随机互动,确定长按 = 摸头(上/下 照常翻页)。
+    // Lynn: OK records five seconds; actions come from Grok tools.
     if (s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE &&
         (key == APP_KEY_OK || key == APP_KEY_OK_DOUBLE || key == APP_KEY_OK_LONG)) {
         app_nav_poke(&s_nav, now_ms());
-        lynn_play(key == APP_KEY_OK_LONG ? "pat" : NULL);
+        on_grok_status(app_grok_voice() ? "Preparing microphone..." : "Microphone busy. Please wait");
         return;
     }
     switch (app_nav_key(&s_nav, key, now_ms())) {
@@ -554,6 +558,18 @@ static void app_task(void *arg) {
             }
         }
 
+        grok_event_t grok_event;
+        while (xQueueReceive(s_grok_events, &grok_event, 0) == pdTRUE) {
+            // Background events never navigate away from another page.
+            if (s_provisioning || s_nav.page != APP_PAGE_LYNN || s_nav.idle != APP_IDLE_AWAKE) continue;
+            app_nav_poke(&s_nav, now_ms());
+            if (bsp_lvgl_lock(500)) {
+                if (grok_event.action[0]) ui_lynn_play(grok_event.action, NULL);
+                if (grok_event.text[0]) ui_lynn_bot_text(grok_event.text);
+                bsp_lvgl_unlock();
+            }
+        }
+
         int64_t t = now_ms();
         if (s_provisioning) {
             app_nav_poke(&s_nav, t);
@@ -585,8 +601,9 @@ static void app_task(void *arg) {
 void app_main(void) {
     ESP_LOGI(TAG, "Astra Monitor 启动,组织 %s", CONFIG_ASTRA_GH_ORG);
     s_events = xQueueCreate(16, sizeof(app_event_t));
+    s_grok_events = xQueueCreate(4, sizeof(grok_event_t));
     s_handoff_lock = xSemaphoreCreateMutex();
-    if (!s_events || !s_handoff_lock) return;
+    if (!s_events || !s_handoff_lock || !s_grok_events) return;
 
     bsp_i2c_init();
     if (bsp_display_init() != ESP_OK || !bsp_lvgl_init()) {
@@ -620,6 +637,13 @@ void app_main(void) {
     if (err != ESP_OK) ESP_LOGW(TAG, "音频不可用: %s", esp_err_to_name(err));
     app_audio_set_enabled(app_settings_prefs().sound_on);
     app_audio_play(SOUND_BOOT);
+
+    err = app_grok_start(on_grok, on_grok_status);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Connector worker unavailable: %s", esp_err_to_name(err));
+        return;
+    }
+    refresh_model();
 
     if (xTaskCreate(app_task, "app", 6144, NULL, 5, NULL) != pdPASS ||
         xTaskCreate(sync_task, "sync", 8192, NULL, 4, &s_sync_task) != pdPASS) {

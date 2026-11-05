@@ -3,6 +3,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include "grok_proto.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -30,3 +31,7 @@ esp_err_t app_settings_set_token(const char *token);   // NULL 或 "" = 清除 N
 // "今日新增星标"的基线:day_key 形如 20261104(本地日期)。
 void app_settings_day_baseline(uint32_t *day_key, uint32_t *stars);
 esp_err_t app_settings_set_day_baseline(uint32_t day_key, uint32_t stars);
+
+// Connector settings, stored only in NVS. Updates must contain all fields.
+bool app_settings_grok(grok_config_t *config);
+esp_err_t app_settings_set_grok(const grok_config_t *config);

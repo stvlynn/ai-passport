@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "audio";
@@ -17,6 +18,7 @@ static const char *TAG = "audio";
 #define CLAP_THRESHOLD  14000
 
 static QueueHandle_t s_queue;
+static SemaphoreHandle_t s_io_lock;
 static volatile bool s_enabled;          // 默认静音,由设置决定
 static volatile bool s_listening;
 static bool s_audio_ok;
@@ -43,18 +45,26 @@ static void audio_task(void *arg) {
         sound_id_t id;
         TickType_t wait = s_listening ? 0 : portMAX_DELAY;
         if (xQueueReceive(s_queue, &id, wait) == pdTRUE) {
-            if (s_enabled && id != SOUND_NONE) play(id);
+            if (s_enabled && id != SOUND_NONE && xSemaphoreTake(s_io_lock, 0) == pdTRUE) {
+                play(id);
+                xSemaphoreGive(s_io_lock);
+            }
             // 自己的声音会被麦克风听到:播放后重置检测器。
             clap_detector_init(&clap, CLAP_THRESHOLD);
             continue;
         }
         if (!s_listening) continue;
-        if (bsp_audio_read(s_buf, sizeof(s_buf)) != ESP_OK) {
+        if (xSemaphoreTake(s_io_lock, pdMS_TO_TICKS(20)) != pdTRUE) continue;
+        esp_err_t read_err = bsp_audio_read(s_buf, sizeof(s_buf));
+        if (read_err != ESP_OK) {
+            xSemaphoreGive(s_io_lock);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
         int64_t now_ms = esp_timer_get_time() / 1000;
-        if (clap_detector_feed(&clap, s_buf, CHUNK_SAMPLES, now_ms) && s_on_clap) {
+        bool detected = clap_detector_feed(&clap, s_buf, CHUNK_SAMPLES, now_ms);
+        xSemaphoreGive(s_io_lock);
+        if (detected && s_on_clap) {
             ESP_LOGI(TAG, "检测到拍手两下");
             s_on_clap();
         }
@@ -64,8 +74,9 @@ static void audio_task(void *arg) {
 esp_err_t app_audio_start(bool audio_ok, app_audio_clap_cb_t on_clap) {
     s_audio_ok = audio_ok;
     s_on_clap = on_clap;
+    s_io_lock = xSemaphoreCreateMutex();
     s_queue = xQueueCreate(4, sizeof(sound_id_t));
-    if (!s_queue) return ESP_ERR_NO_MEM;
+    if (!s_queue || !s_io_lock) return ESP_ERR_NO_MEM;
     if (!audio_ok) return ESP_OK;
     esp_err_t err = bsp_audio_set_format(SOUND_RATE_HZ, 16, 1);
     if (err != ESP_OK) {
@@ -96,4 +107,30 @@ void app_audio_set_listening(bool listen) {
         sound_id_t none = SOUND_NONE;
         (void)xQueueSend(s_queue, &none, 0);
     }
+}
+
+
+esp_err_t app_audio_capture(app_audio_sink_t sink, void *arg, unsigned seconds) {
+    if (!sink || !seconds || seconds > 5) return ESP_ERR_INVALID_ARG;
+    if (!s_audio_ok || !s_io_lock) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_io_lock, pdMS_TO_TICKS(1000)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    int16_t pcm[CHUNK_SAMPLES];
+    esp_err_t err = ESP_OK;
+    // Discard stale microphone DMA samples captured before the user prompt.
+    for (unsigned i = 0; i < 8 && err == ESP_OK; i++) err = bsp_audio_read(pcm, sizeof(pcm));
+    int64_t start = esp_timer_get_time();
+    for (unsigned i = 0; i < seconds * SOUND_RATE_HZ / CHUNK_SAMPLES && err == ESP_OK; i++) {
+        err = bsp_audio_read(pcm, sizeof(pcm));
+        if (err == ESP_OK) err = sink(pcm, sizeof(pcm), arg);
+        // Abort a congested link instead of retaining unbounded audio or
+        // silently treating a stalled stream as a clean five-second utterance.
+        int64_t elapsed = esp_timer_get_time() - start;
+        int64_t expected = (int64_t)(i + 1) * CHUNK_SAMPLES * 1000000 / SOUND_RATE_HZ;
+        // Six 240-frame DMA descriptors hold at most 90ms. Abort if the
+        // network has fallen beyond that headroom rather than upload PCM
+        // with undetected missing speech. No retries replay a user's audio.
+        if (elapsed > expected + 80000 || elapsed > (int64_t)(seconds + 2) * 1000000) err = ESP_ERR_TIMEOUT;
+    }
+    xSemaphoreGive(s_io_lock);
+    return err;
 }

@@ -82,3 +82,6 @@ bool ui_poke(const ui_model_t *m);
 
 // 屏幕阶段变化(唤醒/变暗/关屏)时调用:关屏后停止眨眼等动画。
 void ui_set_idle(const ui_model_t *m);
+
+// Persistent, scrolling connector reply; independent from idle action captions.
+void ui_lynn_bot_text(const char *text);
