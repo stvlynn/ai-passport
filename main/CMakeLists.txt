@@ -15,6 +15,8 @@ idf_component_register(
          "app_console.c"
          "gh_model.c"
          "lynn_anim.c"
+         "lynn_ear.c"
+         "mic_sense.c"
          "lynn_stage.c"
          "lynn_stage_data.c"
          "gh_parse.c"

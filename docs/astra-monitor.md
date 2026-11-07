@@ -36,7 +36,7 @@ moving the selection. Every long press gives visible feedback: a card states
 that a sync started, why it cannot run (no Wi-Fi, no token), the new value of a
 setting, or the sync result.
 
-Device menu: web setup, sync now, sound (off by default), clap to wake, brightness
+Device menu: web setup, sync now, sound (off by default), microphone (clap to wake and Lynn's sound play), brightness
 (100/70/40/20%), screen-off time (1/5/10/30 minutes or never, default 10
 minutes), and forget Wi-Fi (needs a second long press within 3 s).
 
@@ -64,6 +64,36 @@ wake it (microphone, can be turned off). New activity wakes the screen, plays
 an 8-bit sound if sound is on, slides in a notification card, and Lynn reacts: hop for stars
 and merges, surprise for issues, reviewing for PRs.
 
+## Sound play on the Lynn page
+
+While the Lynn page is awake and the microphone setting is on, Lynn listens and
+reacts right away. Everything runs on the device (`main/mic_sense.c` extracts
+loudness, pitch, spectral tilt and short claps from 20 ms blocks;
+`main/lynn_ear.c` decides her reaction). Nothing is recorded or uploaded unless
+you hold OK to talk.
+
+| Sound | Lynn |
+| --- | --- |
+| Blow at the device | Wind streaks fly past; she squints, braces and slides back. Keep blowing and she tumbles off the stage, then walks back in and sighs |
+| Hum "aaah" | She floats; louder or higher pitch lifts her higher. Stars fly in while she floats: match their height with your pitch to catch them |
+| Sing a song with words | A little concert: she sways and EQ bars light up on both sides; when you stop she applauds |
+| One clap | She turns toward the sound |
+| Two to five claps | She claps the same number back, at your tempo |
+| Short-short-long (three claps) | Secret code: confetti |
+| Steady clapping or a beat | She dances on your tempo with EQ bars; when you stop she bows |
+| "Shhh" | Finger to her lips, then she naps |
+| Whisper | She leans in to listen, then winks |
+| Continuous music | Headphones on, swaying, EQ bars |
+| Long loud noise | She covers her face until it is quiet again |
+| Long silence | She dozes off; a sudden sound startles her awake |
+
+A thin line under the floor shows how loud she hears you. Sound play keeps the
+screen from dimming while it is active. Birthdays happen once a year, so sound
+never brings the cake: an agent or the serial command `lynn play cake` serves
+it, and you blow at the microphone to put out the three candles. `lynn ear`
+prints what she currently hears (level, pitch, tilt, reaction) for tuning on a
+real board.
+
 ## Hardware use
 
 | Hardware | Use |
@@ -71,7 +101,7 @@ and merges, surprise for issues, reviewing for PRs.
 | ST7789 display, LVGL | Four pages, provisioning page, notification card, sprite animation |
 | Three ADC buttons | Click, double click, and long press |
 | ES8311 speaker | Square-wave sound effects synthesized at 16 kHz |
-| ES8311 microphone | Double-clap detection while the screen is dim or off |
+| ES8311 microphone | Double-clap detection while the screen is dim or off; sound play on the awake Lynn page (processed on the device, never uploaded) |
 | CW2017 fuel gauge | Battery percentage in the status bar, voltage on the Device page |
 | Wi-Fi STA | HTTPS GraphQL requests and SNTP |
 | Wi-Fi SoftAP | Setup hotspot, captive DNS, and web form, only while the setup page is open |

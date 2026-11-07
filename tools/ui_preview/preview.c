@@ -29,6 +29,49 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px) {
     lv_display_flush_ready(disp);
 }
 
+// 假麦克风:按设定的声音每 20 ms 产出一帧特征,让预览也能走一遍声音互动。
+static struct {
+    bool on, voiced, clap;
+    uint8_t level;
+    uint16_t pitch;
+    int8_t tilt;
+    uint32_t t;
+} s_mic;
+
+static bool fake_mic(mic_frame_t *f) {
+    if (!s_mic.on || s_tick - s_mic.t < 20) return false;
+    s_mic.t += 20;
+    memset(f, 0, sizeof(*f));
+    f->t_ms = s_mic.t;
+    f->level = s_mic.level;
+    f->voiced = s_mic.voiced;
+    f->pitch_hz = s_mic.voiced ? s_mic.pitch : 0;
+    f->tilt = s_mic.tilt;
+    for (int b = 0; b < MIC_BANDS; b++) f->band[b] = (uint8_t)((s_mic.t / 20 * (b + 3) + b * 5) % 16);
+    if (s_mic.clap) {
+        f->clap = true;
+        f->clap_ms = s_mic.t - 40;
+        s_mic.clap = false;
+    }
+    return true;
+}
+
+static void mic(uint8_t level, bool voiced, uint16_t pitch, int8_t tilt) {
+    s_mic.level = level;
+    s_mic.voiced = voiced;
+    s_mic.pitch = pitch;
+    s_mic.tilt = tilt;
+}
+
+static void pump(uint32_t ms);
+
+static bool ear_is(const char *mode) {
+    char st[160];
+    ui_lynn_ear_status(st, sizeof(st));
+    printf("ear: %s\n", st);
+    return strstr(st, mode) != NULL;
+}
+
 static void pump(uint32_t ms) {
     for (uint32_t t = 0; t < ms; t += 10) {
         s_tick += 10;
@@ -172,6 +215,75 @@ int main(int argc, char **argv) {
         fprintf(stderr, "FAIL: stage stayed frozen after waking on the Lynn page\n");
         return 1;
     }
+    // ---- 声音互动(假麦克风)----
+    pump(6000);
+    s_mic.on = true;
+    s_mic.t = s_tick;
+    ui_lynn_set_ears(fake_mic, NULL);
+    mic(0, false, 0, 0);
+    pump(400);
+    mic(30, false, 0, -15);               // 吹气
+    pump(800);
+    dump(out, "00e-lynn-blow");
+    if (!ear_is("mode=吹气")) { fprintf(stderr, "FAIL: blowing must push Lynn\n"); return 1; }
+    pump(1500);
+    dump(out, "00f-lynn-blown-away");
+    if (!ear_is("mode=被吹走了")) { fprintf(stderr, "FAIL: a long blow must blow Lynn away\n"); return 1; }
+    mic(0, false, 0, 0);
+    pump(4200);
+    dump(out, "00g-lynn-walk-back");
+    {   // 回归:局部重绘必须与整屏重绘一致(曾因缩放采样差一列留下细竖线)
+        static uint16_t partial[W * H];
+        memcpy(partial, s_fb, sizeof(partial));
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(NULL);
+        if (memcmp(partial, s_fb, sizeof(partial)) != 0) {
+            int x1 = W, y1 = H, x2 = -1, y2 = -1;
+            for (int i = 0; i < W * H; i++) {
+                if (partial[i] == s_fb[i]) continue;
+                int x = i % W, y = i / W;
+                if (x < x1) x1 = x;
+                if (x > x2) x2 = x;
+                if (y < y1) y1 = y;
+                if (y > y2) y2 = y;
+            }
+            fprintf(stderr, "FAIL: partial stage redraw differs from a full redraw in %d,%d-%d,%d\n", x1, y1, x2, y2);
+            return 1;
+        }
+    }
+    pump(6000);
+    mic(20, true, 220, -10);              // 哼"啊——"
+    pump(1400);
+    mic(20, true, 300, -10);
+    pump(1300);
+    dump(out, "00h-lynn-float");
+    if (!ear_is("mode=飘浮")) { fprintf(stderr, "FAIL: humming must float Lynn\n"); return 1; }
+    mic(0, false, 0, 0);
+    pump(4000);
+    ui_lynn_play("cake", NULL);           // 生日蛋糕
+    pump(1200);
+    dump(out, "00i-lynn-cake");
+    mic(30, false, 0, -15);
+    pump(420);
+    dump(out, "00j-lynn-cake-blow");
+    pump(900);
+    mic(0, false, 0, 0);
+    pump(2200);
+    dump(out, "00k-lynn-wish");
+    pump(6000);
+    mic(14, false, 0, 4);                 // 均匀拍手:跳舞 + 频谱
+    for (int i = 0; i < 6; i++) {
+        s_mic.clap = true;
+        pump(500);
+    }
+    pump(160);
+    dump(out, "00l-lynn-groove");
+    if (!ear_is("mode=跟着节拍")) { fprintf(stderr, "FAIL: steady claps must start the dance\n"); return 1; }
+    mic(0, false, 0, 0);
+    s_mic.on = false;
+    ui_lynn_set_ears(NULL, NULL);
+    pump(3000);
+
     nav.page = APP_PAGE_HOME;
     ui_build(&m);
     pump(200);

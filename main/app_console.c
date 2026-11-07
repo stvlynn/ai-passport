@@ -55,8 +55,11 @@ static void handle_lynn(char *cur) {
     } else if (strcmp(verb, "status") == 0) {
         ok = s_lynn && s_lynn("status", NULL, NULL, out, sizeof(out));
         printf("%s\n", ok ? out : "error");
+    } else if (strcmp(verb, "ear") == 0) {
+        ok = s_lynn && s_lynn("ear", NULL, NULL, out, sizeof(out));
+        printf("%s\n", ok ? out : "error");
     } else {
-        printf("usage: lynn list | lynn play <id> [line] | lynn say <text> | lynn status\n");
+        printf("usage: lynn list | lynn play <id|cake> [line] | lynn say <text> | lynn status | lynn ear\n");
     }
 }
 

@@ -277,7 +277,13 @@ def build():
          f'#define LYNN_BASE_LINE "{BASE_LINE}"', '']
     for i, n in enumerate(sprite_names):
         h.append(f'#define LYNN_SPR_{n} {i}')
-    h += [f'#define LYNN_SPR_EMOTE_BASE {sprite_names.index("EMOTE_" + A.EMOTES[0].upper())}', '',
+    h += [f'#define LYNN_SPR_EMOTE_BASE {sprite_names.index("EMOTE_" + A.EMOTES[0].upper())}', '']
+    for e in A.EMOTES:
+        h.append(f'#define LYNN_EMOTE_{e.upper()} {eidx[e]}')
+    h.append('')
+    for n in frames:
+        h.append(f'#define LYNN_FR_{n.upper()} {fidx[n]}')
+    h += ['',
           'typedef struct { int8_t x, y; uint8_t w, h; uint32_t offset; } lynn_bmp_t;',
           'typedef struct { uint8_t frame, ticks; int8_t lift, dx, hx, hy; uint8_t flags, emote; int8_t hand; } lynn_step_t;',
           'typedef struct {',

@@ -27,6 +27,7 @@ BaseType_t xSemaphoreGive(SemaphoreHandle_t sem);
 QueueHandle_t xQueueCreate(unsigned count, unsigned size);
 BaseType_t xQueueReceive(QueueHandle_t queue, void *value, TickType_t ticks);
 BaseType_t xQueueSend(QueueHandle_t queue, const void *value, TickType_t ticks);
+BaseType_t xQueueReset(QueueHandle_t queue);
 BaseType_t xTaskCreate(void (*fn)(void *), const char *name, unsigned stack, void *arg, unsigned priority, TaskHandle_t *task);
 void vTaskDelay(TickType_t ticks);
 int64_t esp_timer_get_time(void);

@@ -38,6 +38,8 @@ typedef struct {
     uint32_t sig;              // 上一次渲染的画面签名,用于跳过无变化的重绘
     char line[LYNN_LINE_MAX];  // 当前台词(动作默认台词或 agent 指定)
     bool line_custom;
+    bool live;                 // 姿势由外部(声音互动)逐 tick 接管,动作时间轴暂停
+    lynn_step_t live_step;
 } lynn_stage_t;
 
 void lynn_stage_init(lynn_stage_t *s, uint32_t seed);
@@ -67,5 +69,8 @@ const char *lynn_stage_line(const lynn_stage_t *s);
 const char *lynn_stage_action_id(const lynn_stage_t *s);
 const char *lynn_stage_action_name(const lynn_stage_t *s);
 bool lynn_stage_busy(const lynn_stage_t *s);   // 是否在播放互动动作
+
+// 声音互动接管姿势:pose 非 NULL 时本 tick 起显示该姿势(动作时间轴暂停),NULL 恢复动作/待机。
+void lynn_stage_live(lynn_stage_t *s, const lynn_step_t *pose);
 
 int lynn_action_find(const char *id);

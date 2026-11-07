@@ -131,6 +131,10 @@ static void on_clap(void) {
     post(EV_CLAP, 0, 0);
 }
 
+static void lynn_sfx(void) {
+    app_audio_play(SOUND_TICK);
+}
+
 static void on_console(app_console_cmd_t cmd) {
     post(EV_CONSOLE, (uint8_t)cmd, 0);
 }
@@ -241,7 +245,10 @@ static void refresh_model(void) {
     int64_t next = CONFIG_ASTRA_REFRESH_SECONDS - (now_ms() - s_last_sync_ms) / 1000;
     s_model.next_sync_in_s = next < 0 ? 0 : next;
     s_model.idle = (uint8_t)s_nav.idle;
-    app_grok_set_active(!s_provisioning && s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE);
+    bool lynn_awake = !s_provisioning && s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE;
+    app_grok_set_active(lynn_awake);
+    // Lynn 页亮屏时她一直在听(本地处理,不上传);"麦克风"开关同时管拍手唤醒与这里。
+    app_audio_set_sensing(lynn_awake && s_model.prefs.clap_wake);
     update_today();
 }
 
@@ -379,7 +386,7 @@ static void run_menu(ui_menu_t item) {
         app_audio_set_enabled(p.sound_on);
         break;
     case UI_MENU_CLAP:
-        show_message(false, "拍手唤醒", p.clap_wake ? "已开启:息屏时拍两下手" : "已关闭");
+        show_message(false, "麦克风", p.clap_wake ? "已开启:拍手唤醒、Lynn 听声音" : "已关闭");
         break;
     case UI_MENU_SCREEN_OFF:
         if (p.screen_off_min) {
@@ -414,11 +421,13 @@ static bool on_lynn_cmd(const char *verb, const char *arg, const char *line, cha
         ui_lynn_say(arg);
     } else if (strcmp(verb, "status") == 0) {
         ui_lynn_status(out, cap);
+    } else if (strcmp(verb, "ear") == 0) {
+        ui_lynn_ear_status(out, cap);
     } else {
         ok = false;
     }
     bsp_lvgl_unlock();
-    if (ok && strcmp(verb, "status") != 0) post(EV_LYNN_SHOW, 0, 0);
+    if (ok && strcmp(verb, "status") != 0 && strcmp(verb, "ear") != 0) post(EV_LYNN_SHOW, 0, 0);
     return ok;
 }
 
@@ -615,6 +624,8 @@ static void app_task(void *arg) {
         }
 
         int64_t t = now_ms();
+        // 正在和 Lynn 用声音玩(吹气、哼歌、拍手……)时不要变暗。
+        if (s_nav.page == APP_PAGE_LYNN && app_audio_sense_heard(1000)) (void)app_nav_poke(&s_nav, t);
         if (s_ptt_down_at && !s_ptt_shown && t - s_ptt_down_at >= PTT_TAP_MS) {
             s_ptt_shown = true;            // a real hold, not a page tap
             on_grok_status("Listening... release OK to send");
@@ -700,6 +711,10 @@ void app_main(void) {
     }
     if (bsp_button_init(on_key, NULL) != ESP_OK) ESP_LOGE(TAG, "按键初始化失败");
     app_console_set_lynn(on_lynn_cmd);
+    if (bsp_lvgl_lock(1000)) {
+        ui_lynn_set_ears(app_audio_sense_pop, lynn_sfx);
+        bsp_lvgl_unlock();
+    }
     app_console_start(on_console);
     ESP_LOGI(TAG, "就绪:audio=%d 空闲堆 %u", audio_ok, (unsigned)esp_get_free_heap_size());
 }

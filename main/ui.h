@@ -9,6 +9,7 @@
 #include "app_settings.h"
 #include "gh_fetch.h"
 #include "gh_model.h"
+#include "mic_sense.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -82,6 +83,14 @@ bool ui_poke(const ui_model_t *m);
 
 // 屏幕阶段变化(唤醒/变暗/关屏)时调用:关屏后停止眨眼等动画。
 void ui_set_idle(const ui_model_t *m);
+
+// 声音互动:pop 非阻塞地取一帧麦克风特征(NULL = 不听),sfx 播放一下提示音(可为 NULL)。
+// Lynn 页的舞台定时器每拍取完所有帧交给 lynn_ear,让 Lynn 对吹气、哼唱、拍手等做出反应。
+typedef bool (*ui_mic_pop_t)(mic_frame_t *f);
+typedef void (*ui_sfx_t)(void);
+void ui_lynn_set_ears(ui_mic_pop_t pop, ui_sfx_t sfx);
+// 当前声音互动状态(串口 "lynn ear"),写入 buf。
+void ui_lynn_ear_status(char *buf, size_t cap);
 
 // Persistent, scrolling connector reply; independent from idle action captions.
 void ui_lynn_bot_text(const char *text);

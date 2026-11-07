@@ -33,6 +33,7 @@ done < <(find "${lvgl}/src" -name '*.c' | sort)
 "${CC:-cc}" "${cflags[@]}" \
     "${root}/tools/ui_preview/preview.c" "${root}/main/ui.c" "${root}/main/ui_assets.c" \
     "${root}/main/gh_model.c" "${root}/main/app_nav.c" "${root}/main/portal_proto.c" "${root}/main/lynn_anim.c" "${root}/main/lynn_stage.c" "${root}/main/lynn_stage_data.c" \
+    "${root}/main/lynn_ear.c" "${root}/main/mic_sense.c" \
     "${root}/assets/fonts/ui_font_12.c" "${root}/assets/fonts/ui_font_24.c" \
     "${root}/assets/fonts/ui_font_36.c" \
     "${objs[@]}" -lm -o "${obj}/preview"

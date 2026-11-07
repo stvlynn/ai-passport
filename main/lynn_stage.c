@@ -28,6 +28,7 @@ static uint32_t rnd(lynn_stage_t *s, uint32_t lo, uint32_t hi) {
 }
 
 static const lynn_step_t *current(const lynn_stage_t *s) {
+    if (s->live) return &s->live_step;
     if (s->action < 0) return &lynn_base[s->base_step];
     uint16_t n;
     const lynn_step_t *st = phase_steps(&lynn_actions[s->action], s->phase, &n);
@@ -227,7 +228,7 @@ static uint32_t signature(const lynn_stage_t *s) {
 
 bool lynn_stage_tick(lynn_stage_t *s) {
     s->ticks++;
-    advance(s);
+    if (!s->live) advance(s);
     effects(s, current(s));
     uint32_t sig = signature(s);
     bool changed = sig != s->sig;
@@ -281,9 +282,14 @@ void lynn_stage_render(const lynn_stage_t *s, uint16_t *buf, lynn_rect_t *conten
     int sw = 16 - st->lift;
     if (sw < 10) sw = 10;
     int cx = CELL_X + 32 + st->dx;
-    for (int x = cx - sw / 2; x <= cx + sw / 2; x++) buf[(GROUND - 1) * LYNN_STAGE_W + x] = lynn_palette[LYNN_COLOR_SHADOW];
-    grow(cx - 8, GROUND - 1);                       // 阴影最宽 16 像素:整段算进包围盒,宽窄变化都能被重绘
-    grow(cx + 8, GROUND - 1);
+    for (int x = cx - sw / 2; x <= cx + sw / 2; x++) {
+        if (x >= 0 && x < LYNN_STAGE_W) buf[(GROUND - 1) * LYNN_STAGE_W + x] = lynn_palette[LYNN_COLOR_SHADOW];
+    }
+    // 阴影最宽 16 像素:整段算进包围盒,宽窄变化都能被重绘(被吹出舞台时只算可见部分)。
+    if (cx + 8 >= 0 && cx - 8 < LYNN_STAGE_W) {
+        grow(cx - 8 < 0 ? 0 : cx - 8, GROUND - 1);
+        grow(cx + 8 >= LYNN_STAGE_W ? LYNN_STAGE_W - 1 : cx + 8, GROUND - 1);
+    }
 
     int x0 = CELL_X + st->dx;
     int y0 = GROUND - FEET_ROW - st->lift;
@@ -326,4 +332,19 @@ const char *lynn_stage_action_name(const lynn_stage_t *s) {
 
 bool lynn_stage_busy(const lynn_stage_t *s) {
     return s->action >= (int)lynn_idle_count;
+}
+
+void lynn_stage_live(lynn_stage_t *s, const lynn_step_t *pose) {
+    if (pose) {
+        if (!s->live) {
+            // 接管时中断正在播放的动作,结束接管后从基础待机继续。
+            s->plane_on = false;
+            memset(s->drops, 0, sizeof(s->drops));
+            finish_action(s);
+        }
+        s->live_step = *pose;
+        s->live = true;
+    } else {
+        s->live = false;
+    }
 }

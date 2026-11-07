@@ -18,6 +18,7 @@ BaseType_t xSemaphoreGive(SemaphoreHandle_t sem) { (void)sem; assert(locked); lo
 QueueHandle_t xQueueCreate(unsigned count, unsigned size) { (void)count; (void)size; return (void *)2; }
 BaseType_t xQueueReceive(QueueHandle_t queue, void *value, TickType_t ticks) { (void)queue; (void)value; (void)ticks; return 0; }
 BaseType_t xQueueSend(QueueHandle_t queue, const void *value, TickType_t ticks) { (void)queue; (void)value; (void)ticks; return 1; }
+BaseType_t xQueueReset(QueueHandle_t queue) { (void)queue; return 1; }
 BaseType_t xTaskCreate(void (*fn)(void *), const char *name, unsigned stack, void *arg, unsigned priority, TaskHandle_t *task) {
     (void)fn; (void)name; (void)stack; (void)arg; (void)priority; (void)task; return pdPASS;
 }

@@ -10,6 +10,7 @@
 #include "ui_assets.h"
 
 #include "lynn_anim.h"
+#include "lynn_ear.h"
 #include "lynn_stage.h"
 #include "grok_proto.h"
 
@@ -615,7 +616,7 @@ static void refresh_repos(const ui_model_t *m) {
 // ---------------------------------------------------------------------------
 
 static const char *MENU_NAMES[UI_MENU_COUNT] = {
-    "网页配网", "立即同步", "提示音", "拍手唤醒", "屏幕亮度", "息屏时间", "清除 Wi-Fi",
+    "网页配网", "立即同步", "提示音", "麦克风", "屏幕亮度", "息屏时间", "清除 Wi-Fi",
 };
 
 static void build_system(lv_obj_t *scr) {
@@ -721,11 +722,20 @@ static int16_t s_stage_shown = -2;          // 卡片上显示的动作,变化�
 static uint32_t s_stage_clock;              // 已按真实时间推进到的 tick 起点(ms)
 static lynn_rect_t s_stage_prev;            // 上一帧的内容包围盒(逻辑像素)
 static uint32_t s_fps_window, s_fps_frames, s_fps;
+// 声音互动
+static lynn_ear_t s_ear;
+static lynn_ear_view_t s_ear_view;
+static ui_mic_pop_t s_mic_pop;
+static ui_sfx_t s_sfx;
+static uint32_t s_mic_seen;                 // 最近一次收到麦克风帧的 lv_tick;0 = 没在听
+static char s_ear_caption[32];              // 卡片上显示的声音互动小字(变化时刷新卡片)
+
 static void stage_sync_idle(void);
 
 static void stage_ensure(void) {
     if (!s_stage_ready) {
         lynn_stage_init(&s_stage, lv_rand(1, 0x7FFFFFFF));
+        lynn_ear_init(&s_ear, lv_rand(1, 0x7FFFFFFF));
         s_stage_ready = true;
     }
 }
@@ -747,8 +757,13 @@ static void stage_card(void) {
     lv_obj_set_y(s.stage_line, -(int)s_bot_page * STAGE_LINES * STAGE_STEP);
     if (pages > 1) lv_label_set_text_fmt(s.stage_page, "%u/%u", s_bot_page + 1u, pages);
     else lv_label_set_text(s.stage_page, "");
-    const char *kind = s_stage.action < 0 ? "" : lynn_stage_busy(&s_stage) ? "互动 · " : "待机 · ";
-    lv_label_set_text_fmt(s.stage_cap, "%s%s", kind, lynn_stage_action_name(&s_stage));
+    snprintf(s_ear_caption, sizeof(s_ear_caption), "%s", s_ear_view.caption ? s_ear_view.caption : "");
+    if (s_ear_caption[0]) {
+        lv_label_set_text_fmt(s.stage_cap, "声音 · %s", s_ear_caption);
+    } else {
+        const char *kind = s_stage.action < 0 ? "" : lynn_stage_busy(&s_stage) ? "互动 · " : "待机 · ";
+        lv_label_set_text_fmt(s.stage_cap, "%s%s", kind, lynn_stage_action_name(&s_stage));
+    }
     s_stage_shown = s_stage.action;
 }
 
@@ -765,8 +780,44 @@ static void stage_invalidate(const lynn_rect_t *now) {
     if (u.x1 > u.x2) return;
     lv_area_t a;
     lv_obj_get_coords(s.stage, &a);
-    lv_area_t r = { a.x1 + u.x1 * 3, a.y1 + u.y1 * 3, a.x1 + u.x2 * 3 + 2, a.y1 + u.y2 * 3 + 2 };
-    lv_obj_invalidate_area(s.stage, &r);
+    // 有变化就整块舞台重绘:LVGL 缩放图片时的采样步长由重绘区域的宽高推算,大小不同的局部重绘会差
+    // 一行/一列,留下细线(人物被吹到边缘、风吹过时很明显)。人物本身几乎占满舞台高度,多画的不多。
+    (void)u;
+    lv_obj_invalidate(s.stage);
+}
+
+// 取完麦克风队列交给耳朵。帧停了(录音、离开本页、关掉麦克风)半秒以上就结束进行中的声音反应。
+static bool ear_listen(uint32_t now) {
+    mic_frame_t f;
+    bool got = false;
+    while (s_mic_pop && s_mic_pop(&f)) {
+        lynn_ear_feed(&s_ear, &f);
+        got = true;
+    }
+    if (got) {
+        s_mic_seen = now ? now : 1;
+    } else if (s_mic_seen && now - s_mic_seen > 500) {
+        s_mic_seen = 0;
+        lynn_ear_reset(&s_ear);
+        return true;
+    }
+    return false;
+}
+
+// 耳朵前进一拍:接管/放开姿势,执行一次性请求。返回 true 表示道具在动,需要重绘。
+static bool ear_tick(void) {
+    const char *id = lynn_stage_action_id(&s_stage);
+    bool drowsy = !s_stage.live && (strcmp(id, "doze") == 0 || strcmp(id, "sleep") == 0);
+    lynn_ear_tick(&s_ear, drowsy, &s_ear_view);
+    lynn_stage_live(&s_stage, s_ear_view.live ? &s_ear_view.pose : NULL);
+    lynn_ear_cue_t cue;
+    while (lynn_ear_take_cue(&s_ear, &cue)) {
+        if (cue.action) lynn_stage_play(&s_stage, cue.action);
+        if (cue.line) ui_lynn_bot_text(cue.line);
+        if (cue.sfx && s_sfx) s_sfx();
+    }
+    const lynn_ear_view_t *v = &s_ear_view;
+    return v->vu || v->wind || v->cake || v->eq || v->star || v->sparkle || v->smoke;
 }
 
 static void stage_tick(lv_timer_t *t) {
@@ -780,12 +831,16 @@ static void stage_tick(lv_timer_t *t) {
         s_stage_clock = now - period;
         due = 1;
     }
-    bool changed = false;
-    for (uint32_t i = 0; i < due; i++) changed |= lynn_stage_tick(&s_stage);
+    bool changed = ear_listen(now);
+    for (uint32_t i = 0; i < due; i++) {
+        changed |= ear_tick();                  // 先决定本拍姿势,再让舞台走这一拍
+        changed |= lynn_stage_tick(&s_stage);
+    }
     s_stage_clock += due * period;
     if (changed) {
         lynn_rect_t box;
         lynn_stage_render(&s_stage, s_stage_buf, &box);
+        lynn_ear_render(&s_ear_view, s_ear.ticks, s_stage_buf, &box);
         stage_invalidate(&box);
         s_fps_frames++;
     }
@@ -794,7 +849,9 @@ static void stage_tick(lv_timer_t *t) {
         s_fps_frames = 0;
         s_fps_window = now;
     }
-    if (s_stage.action != s_stage_shown) stage_card();
+    if (s_stage.action != s_stage_shown || strcmp(s_ear_view.caption ? s_ear_view.caption : "", s_ear_caption)) {
+        stage_card();
+    }
 }
 
 // Pixel tail under the bubble, drawn as a narrowing staircase toward the mouth
@@ -854,6 +911,11 @@ static void stage_sync_idle(void) {
 
 bool ui_lynn_play(const char *id, const char *line) {
     stage_ensure();
+    if (id && strcmp(id, "cake") == 0) {     // 生日蛋糕不是时间轴动作,由耳朵接管(对着麦克风吹蜡烛)
+        lynn_ear_cake(&s_ear);
+        if (line) ui_lynn_bot_text(line);
+        return true;
+    }
     if (line) { lynn_stage_say(&s_stage, line); ui_lynn_bot_text(line); }
     if (id) {
         if (lynn_stage_play(&s_stage, id) < 0) {
@@ -907,6 +969,19 @@ void ui_lynn_bot_text(const char *text) {
     }
     s_bot_text[out] = 0;
     stage_card();
+}
+
+void ui_lynn_set_ears(ui_mic_pop_t pop, ui_sfx_t sfx) {
+    s_mic_pop = pop;
+    s_sfx = sfx;
+}
+
+void ui_lynn_ear_status(char *buf, size_t cap) {
+    stage_ensure();
+    const mic_frame_t *f = &s_ear.last;
+    snprintf(buf, cap, "listening=%d mode=%s level=%u voiced=%d pitch=%u tilt=%d stars=%u",
+             s_mic_seen != 0, s_ear.mode == EAR_NONE ? "none" : lynn_ear_mode_name(s_ear.mode),
+             (unsigned)f->level, f->voiced, (unsigned)f->pitch_hz, f->tilt, (unsigned)s_ear.score);
 }
 
 void ui_lynn_status(char *buf, size_t cap) {

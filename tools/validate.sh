@@ -71,7 +71,7 @@ run_static_checks() {
         "${test_dir}/test_demo_${demo}_runtime"
     done
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/voice_stubs -Imain \
-        tests/test_app_voice_capture.c main/sound_synth.c main/voice_codec.c -o "${test_dir}/test_app_voice_capture"
+        tests/test_app_voice_capture.c main/sound_synth.c main/voice_codec.c main/mic_sense.c -o "${test_dir}/test_app_voice_capture"
     "${test_dir}/test_app_voice_capture"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_voice_codec.c main/voice_codec.c -lm -o "${test_dir}/test_voice_codec"
@@ -109,6 +109,12 @@ run_static_checks() {
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_lynn_stage.c main/lynn_stage.c main/lynn_stage_data.c -o "${test_dir}/test_lynn_stage"
     "${test_dir}/test_lynn_stage"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_mic_sense.c main/mic_sense.c -lm -o "${test_dir}/test_mic_sense"
+    "${test_dir}/test_mic_sense"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_lynn_ear.c main/lynn_ear.c main/lynn_stage.c main/lynn_stage_data.c -o "${test_dir}/test_lynn_ear"
+    "${test_dir}/test_lynn_ear"
     cjson_dir="${IDF_PATH:-}/components/json/cJSON"
     if [[ -f "${cjson_dir}/cJSON.c" ]]; then
         "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain -I"${cjson_dir}" \

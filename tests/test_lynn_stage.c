@@ -123,6 +123,29 @@ int main(void) {
     }
     assert(wide.x2 >= 8 + lynn_pot_x + 8);           // 花盆在人物右侧,也被包含
 
+    // 声音互动接管姿势:中断当前动作、时间轴暂停、画出指定帧与位移;放开后回到基础待机。
+    lynn_stage_init(&s, 5);
+    lynn_stage_play(&s, "dance");
+    lynn_step_t pose = { .frame = LYNN_FR_SURPRISED_2, .ticks = 1, .lift = 6, .dx = -30,
+                         .hand = LYNN_HAND_NONE, .emote = LYNN_EMOTE_BANG };
+    lynn_stage_live(&s, &pose);
+    assert(s.action == -1 && s.live);
+    uint32_t ticks_before = s.ticks;
+    bool moved = lynn_stage_tick(&s);
+    assert(moved && s.ticks == ticks_before + 1 && s.base_step == 0 && s.base_tick == 0);
+    lynn_stage_render(&s, buf, &box);
+    assert(box.x1 <= box.x2 && box.x1 < 8);         // 人物左移 30 像素
+    pose.dx = -120;                                  // 完全移出舞台也不越界
+    lynn_stage_live(&s, &pose);
+    buf[LYNN_STAGE_W * LYNN_STAGE_H] = 0xBEEF;
+    lynn_stage_tick(&s);
+    lynn_stage_render(&s, buf, NULL);
+    assert(buf[LYNN_STAGE_W * LYNN_STAGE_H] == 0xBEEF);
+    lynn_stage_live(&s, NULL);
+    assert(!s.live && s.action == -1);
+    for (int t = 0; t < 24 * 20 && s.action < 0; t++) lynn_stage_tick(&s);
+    assert(s.action >= 0);                           // 待机日程照常继续
+
     puts("test_lynn_stage: PASS");
     return 0;
 }
