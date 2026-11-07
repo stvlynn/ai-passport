@@ -139,3 +139,69 @@ esp_err_t app_settings_set_day_baseline(uint32_t day_key, uint32_t stars) {
     xSemaphoreGive(s_lock);
     return err;
 }
+
+
+bool app_settings_grok(grok_config_t *config) {
+    memset(config, 0, sizeof(*config));
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    nvs_handle_t h;
+    if (s_nvs_ok && nvs_open(NS, NVS_READONLY, &h) == ESP_OK) {
+        size_t len = sizeof(*config);
+        if (nvs_get_blob(h, "grok", config, &len) != ESP_OK || len != sizeof(*config)) {
+            memset(config, 0, sizeof(*config));
+        }
+        nvs_close(h);
+    }
+    xSemaphoreGive(s_lock);
+    config->url[GROK_URL_MAX - 1] = 0;
+    config->token[GROK_TOKEN_MAX - 1] = 0;
+    config->bot[GROK_BOT_MAX - 1] = 0;
+    return grok_config_valid(config);
+}
+
+esp_err_t app_settings_set_grok(const grok_config_t *config) {
+    if (!grok_config_valid(config)) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    nvs_handle_t h;
+    esp_err_t err = s_nvs_ok ? nvs_open(NS, NVS_READWRITE, &h) : ESP_ERR_INVALID_STATE;
+    if (err == ESP_OK) {
+        // One blob and one commit avoid mixing old and new endpoint credentials.
+        err = nvs_set_blob(h, "grok", config, sizeof(*config));
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    xSemaphoreGive(s_lock);
+    return err;
+}
+
+esp_err_t app_settings_wifi(wifi_profiles_t *profiles) {
+    memset(profiles, 0, sizeof(*profiles));
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    nvs_handle_t h;
+    esp_err_t err = s_nvs_ok ? nvs_open(NS, NVS_READONLY, &h) : ESP_ERR_INVALID_STATE;
+    if (err == ESP_OK) {
+        size_t len = sizeof(*profiles);
+        err = nvs_get_blob(h, "wifi_profiles", profiles, &len);
+        if (err == ESP_OK && (len != sizeof(*profiles) || !wifi_profiles_valid(profiles))) {
+            err = ESP_ERR_INVALID_STATE;
+        }
+        nvs_close(h);
+    }
+    xSemaphoreGive(s_lock);
+    if (err != ESP_OK) memset(profiles, 0, sizeof(*profiles));
+    return err;
+}
+
+esp_err_t app_settings_set_wifi(const wifi_profiles_t *profiles) {
+    if (!wifi_profiles_valid(profiles)) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    nvs_handle_t h;
+    esp_err_t err = s_nvs_ok ? nvs_open(NS, NVS_READWRITE, &h) : ESP_ERR_INVALID_STATE;
+    if (err == ESP_OK) {
+        err = nvs_set_blob(h, "wifi_profiles", profiles, sizeof(*profiles));
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    xSemaphoreGive(s_lock);
+    return err;
+}

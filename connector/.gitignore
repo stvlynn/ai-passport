@@ -1,0 +1,6 @@
+config.json
+state/
+.venv/
+asr/venv/
+asr/models/
+__pycache__/

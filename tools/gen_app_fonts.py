@@ -24,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "assets" / "fonts"
-APP_SOURCES = ["ui.c", "app_main.c", "gh_model.c", "app_console.c"]
+APP_SOURCES = ["ui.c", "app_main.c", "gh_model.c", "app_console.c", "lynn_stage_data.c"]
 PUNCT = "，。、：；！？「」『』（）·…—“”‘’《》【】～￥％＋－"
 ASCII = "".join(chr(c) for c in range(0x20, 0x7F))
 
@@ -43,7 +43,10 @@ def gb2312_level1() -> str:
 def literal_chars(files) -> set:
     found = set()
     for name in files:
-        text = (ROOT / "main" / name).read_text(encoding="utf-8")
+        path = ROOT / "main" / name
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
         # 只取字符串字面量,排除注释里的字。
         for lit in re.findall(r'"((?:[^"\\\n]|\\.)*)"', text):
             found.update(ch for ch in lit if ord(ch) > 0x7E)

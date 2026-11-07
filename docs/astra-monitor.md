@@ -15,6 +15,7 @@ warm paper and ink, with yellow reserved for today's new stars.
 
 | Page | Content |
 | --- | --- |
+| Lynn | A large full-body Lynn (3x pixel art, 24 fps) with her speech card: 10 idle activities and 31 interactions; see [Lynn actions](lynn-actions.md) |
 | Overview | Total stars, today's new stars, open issues, open PRs, repository count, a focus repository, and Lynn with a status speech bubble |
 | Activity | The 12 most recent star increases, issues, and PRs |
 | Repositories | Repositories by stars, with private markers, issue/PR counts, and a square-root star bar |
@@ -26,13 +27,16 @@ warm paper and ink, with yellow reserved for today's new stars.
 | OK click / double click | Select the next / previous item on the page: the focus repository, a list row, or a Device menu item (wraps around) |
 | OK long press | Confirm. Device page: run the selected item. Other pages: sync now. Provisioning page: go back |
 | UP / DOWN long press | Overview: poke Lynn |
+| OK click / double click / long press on the Lynn page | Record five seconds of speech for Lynn |
+
+Pages run Lynn ⇄ Overview ⇄ Activity ⇄ Repositories ⇄ Device; the device starts on Overview.
 
 Each key has one meaning on every page, so flipping pages never conflicts with
 moving the selection. Every long press gives visible feedback: a card states
 that a sync started, why it cannot run (no Wi-Fi, no token), the new value of a
 setting, or the sync result.
 
-Device menu: web setup, sync now, sound (off by default), clap to wake, brightness
+Device menu: web setup, sync now, sound (off by default), microphone (clap to wake and Lynn's sound play), brightness
 (100/70/40/20%), screen-off time (1/5/10/30 minutes or never, default 10
 minutes), and forget Wi-Fi (needs a second long press within 3 s).
 
@@ -60,6 +64,36 @@ wake it (microphone, can be turned off). New activity wakes the screen, plays
 an 8-bit sound if sound is on, slides in a notification card, and Lynn reacts: hop for stars
 and merges, surprise for issues, reviewing for PRs.
 
+## Sound play on the Lynn page
+
+While the Lynn page is awake and the microphone setting is on, Lynn listens and
+reacts right away. Everything runs on the device (`main/mic_sense.c` extracts
+loudness, pitch, spectral tilt and short claps from 20 ms blocks;
+`main/lynn_ear.c` decides her reaction). Nothing is recorded or uploaded unless
+you hold OK to talk.
+
+| Sound | Lynn |
+| --- | --- |
+| Blow at the device | Wind streaks fly past; she squints, braces and slides back. Keep blowing and she tumbles off the stage, then walks back in and sighs |
+| Hum "aaah" | She floats; louder or higher pitch lifts her higher. Stars fly in while she floats: match their height with your pitch to catch them |
+| Sing a song with words | A little concert: she sways and EQ bars light up on both sides; when you stop she applauds |
+| One clap | She turns toward the sound |
+| Two to five claps | She claps the same number back, at your tempo |
+| Short-short-long (three claps) | Secret code: confetti |
+| Steady clapping or a beat | She dances on your tempo with EQ bars; when you stop she bows |
+| "Shhh" | Finger to her lips, then she naps |
+| Whisper | She leans in to listen, then winks |
+| Continuous music | Headphones on, swaying, EQ bars |
+| Long loud noise | She covers her face until it is quiet again |
+| Long silence | She dozes off; a sudden sound startles her awake |
+
+A thin line under the floor shows how loud she hears you. Sound play keeps the
+screen from dimming while it is active. Birthdays happen once a year, so sound
+never brings the cake: an agent or the serial command `lynn play cake` serves
+it, and you blow at the microphone to put out the three candles. `lynn ear`
+prints what she currently hears (level, pitch, tilt, reaction) for tuning on a
+real board.
+
 ## Hardware use
 
 | Hardware | Use |
@@ -67,7 +101,7 @@ and merges, surprise for issues, reviewing for PRs.
 | ST7789 display, LVGL | Four pages, provisioning page, notification card, sprite animation |
 | Three ADC buttons | Click, double click, and long press |
 | ES8311 speaker | Square-wave sound effects synthesized at 16 kHz |
-| ES8311 microphone | Double-clap detection while the screen is dim or off |
+| ES8311 microphone | Double-clap detection while the screen is dim or off; sound play on the awake Lynn page (processed on the device, never uploaded) |
 | CW2017 fuel gauge | Battery percentage in the status bar, voltage on the Device page |
 | Wi-Fi STA | HTTPS GraphQL requests and SNTP |
 | Wi-Fi SoftAP | Setup hotspot, captive DNS, and web form, only while the setup page is open |
@@ -86,11 +120,28 @@ and merges, surprise for issues, reviewing for PRs.
    8-digit password, and shows both as a Wi-Fi QR code.
 4. Scan the QR code with the phone camera, or join the hotspot manually. The
    setup page usually opens on its own; otherwise browse to
-   `http://192.168.4.1`. Pick a 2.4 GHz network, enter its password, paste the
-   token, and submit.
+   `http://192.168.4.1`. Save the token under Service settings. Under Add or
+   update Wi-Fi, pick a 2.4 GHz network, enter its password, and save/connect.
+   These forms are independent; adding Wi-Fi does not require service fields.
 5. The device tries the new Wi-Fi first. If it connects, the hotspot closes
    and the first sync starts. If it fails within about 20 seconds, the device
    restores the previous Wi-Fi and the page can be submitted again.
+
+The setup page lists up to five saved Wi-Fi networks, with connect and delete
+buttons. Reopen web setup to add another network. A successful trial adds or
+updates that network without removing others; a failed trial or storage write
+preserves the old list. Restarting connects to the most recently saved network;
+connection failures rotate through the saved list with backoff. Existing
+single-network credentials migrate automatically when upgrading with NVS intact.
+The device menu's forget-Wi-Fi action and `wifi clear` delete all saved networks.
+When the list is full, delete a network before adding another.
+
+Selecting a saved network reuses its password. When updating the same SSID,
+leaving the password empty preserves its saved password; for a new SSID, an empty
+password means an open network. To change an existing protected network to an
+open one, delete it first. Saved passwords and tokens are never sent back to
+the browser. Connector URL and Bot ID are prefilled; blank service fields keep
+existing values, and service-only saves do not reconnect Wi-Fi.
 
 The setup page also shows the device's Wi-Fi MAC address, for router
 allowlists or DHCP reservations; the console `status` command prints it too.
@@ -140,9 +191,17 @@ and emoji, are drawn as LVGL placeholder boxes.
   `main/ui.c` and LVGL into `build/ui_preview/`.
 - Host tests: `tests/test_gh_model.c`, `tests/test_gh_parse.c`,
   `tests/test_app_nav.c`, `tests/test_sound_synth.c`, and
-  `tests/test_portal_proto.c`, which run in
+  `tests/test_portal_proto.c`, `tests/test_wifi_profiles.c`,
+  `tests/test_app_net_profiles.c`, `tests/test_app_portal.c`, and
+  `tests/test_app_settings_wifi.c`, which run in
   `./tools/validate.sh --static`.
 
 The baseline hardware-test demo sources (`main/main.c`, `main/demo_*.c`, and
 `main/ui_pixel*`) remain in the tree for their host tests, but they are not
 part of this firmware build.
+
+## Grok Bot on the Lynn page
+
+Configure the HTTPS connector URL, device Bearer token and Lynn Bot ID in web setup. Press OK on the awake Lynn page and speak when Listening appears. The Mac transcribes the five-second recording locally and invokes Lynn through a Grok Bot routine webhook. Lynn replies using the connector MCP text and action tools; responses scroll in the speech card and no speech audio is played. All 41 actions are available individually. Other pages retain their controls. Leaving the Lynn page cancels recording and suspends event delivery; returning starts a fresh cursor without replaying old actions.
+
+See the [connector deployment guide](../connector/README.md) for authentication, tool registration, limits and verification. A running Tunnel alone does not confirm the Bot integration is ready.

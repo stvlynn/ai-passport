@@ -9,8 +9,10 @@
 #include "app_settings.h"
 #include "gh_fetch.h"
 #include "gh_model.h"
+#include "mic_sense.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum {
@@ -67,9 +69,30 @@ void ui_notify(const ui_model_t *m, const gh_feed_item_t *item, int32_t star_del
 // 操作反馈:顶部滑入一张只有文字的提示卡。warn=true 用红色图标,看板娘短暂困惑。
 void ui_message(const ui_model_t *m, bool warn, const char *head, const char *sub);
 
+// ---- Lynn 舞台页(动作同时是 agent 工具,见 docs/lynn-tools.json)----
+// 播放动作;id 为 NULL 时随机一个互动。line 非 NULL 时作为台词。返回 false 表示 id 不存在。
+bool ui_lynn_play(const char *id, const char *line);
+// 改台词(NULL 恢复默认)。
+void ui_lynn_say(const char *text);
+// 当前动作 id 与台词,写入 buf。
+void ui_lynn_status(char *buf, size_t cap);
+
 // 用户在总览页"戳"了看板娘:她会招手/跳起来,打瞌睡时会被惊醒。
 // 当前页没有看板娘时返回 false。
 bool ui_poke(const ui_model_t *m);
 
 // 屏幕阶段变化(唤醒/变暗/关屏)时调用:关屏后停止眨眼等动画。
 void ui_set_idle(const ui_model_t *m);
+
+// 声音互动:pop 非阻塞地取一帧麦克风特征(NULL = 不听),sfx 播放一下提示音(可为 NULL)。
+// Lynn 页的舞台定时器每拍取完所有帧交给 lynn_ear,让 Lynn 对吹气、哼唱、拍手等做出反应。
+typedef bool (*ui_mic_pop_t)(mic_frame_t *f);
+typedef void (*ui_sfx_t)(void);
+void ui_lynn_set_ears(ui_mic_pop_t pop, ui_sfx_t sfx);
+// 当前声音互动状态(串口 "lynn ear"),写入 buf。
+void ui_lynn_ear_status(char *buf, size_t cap);
+
+// Persistent, scrolling connector reply; independent from idle action captions.
+void ui_lynn_bot_text(const char *text);
+// Show the next three-line page of the bubble (wraps). False if it fits one page.
+bool ui_lynn_page_next(void);

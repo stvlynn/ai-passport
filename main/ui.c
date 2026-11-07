@@ -10,6 +10,9 @@
 #include "ui_assets.h"
 
 #include "lynn_anim.h"
+#include "lynn_ear.h"
+#include "lynn_stage.h"
+#include "grok_proto.h"
 
 #include "app_portal.h"
 #include "portal_proto.h"
@@ -67,6 +70,10 @@ static struct {
     // 设备页
     lv_obj_t *info[4];
     row_t menu[UI_MENU_COUNT];
+    // Lynn 舞台页
+    lv_obj_t *stage, *stage_line, *stage_cap, *stage_view, *stage_page;
+    lv_timer_t *stage_timer;
+    bool stage_paused;
     // 配网页
     lv_obj_t *prov_status, *prov_icon, *prov_qr, *prov_info[3];
     char prov_qr_data[96];
@@ -609,7 +616,7 @@ static void refresh_repos(const ui_model_t *m) {
 // ---------------------------------------------------------------------------
 
 static const char *MENU_NAMES[UI_MENU_COUNT] = {
-    "网页配网", "立即同步", "提示音", "拍手唤醒", "屏幕亮度", "息屏时间", "清除 Wi-Fi",
+    "网页配网", "立即同步", "提示音", "麦克风", "屏幕亮度", "息屏时间", "清除 Wi-Fi",
 };
 
 static void build_system(lv_obj_t *scr) {
@@ -696,6 +703,291 @@ static void refresh_system(const ui_model_t *m) {
         lv_obj_set_style_text_color(r->right, lv_color_hex(sel ? C_FAINT : C_MUTED), 0);
         lv_label_set_text(r->right, val[i]);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Lynn 舞台页:3 倍整数放大的 80x76 逻辑像素画布,24 fps
+// ---------------------------------------------------------------------------
+
+static lynn_stage_t s_stage;
+static bool s_stage_ready;
+static char s_bot_text[GROK_TEXT_MAX] = "Hold OK to talk. Tap OK for next page";
+static uint8_t s_bot_page;                  // current page of s_bot_text in the bubble
+#define STAGE_LINE_SPACE 1
+#define STAGE_LINES 3
+#define STAGE_STEP ((int)lv_font_get_line_height(&ui_font_12) + STAGE_LINE_SPACE)
+#define STAGE_PAGE_H (STAGE_LINES * STAGE_STEP - STAGE_LINE_SPACE)
+static uint16_t s_stage_buf[LYNN_STAGE_W * LYNN_STAGE_H];
+static int16_t s_stage_shown = -2;          // 卡片上显示的动作,变化时更新文字
+static uint32_t s_stage_clock;              // 已按真实时间推进到的 tick 起点(ms)
+static lynn_rect_t s_stage_prev;            // 上一帧的内容包围盒(逻辑像素)
+static uint32_t s_fps_window, s_fps_frames, s_fps;
+// 声音互动
+static lynn_ear_t s_ear;
+static lynn_ear_view_t s_ear_view;
+static ui_mic_pop_t s_mic_pop;
+static ui_sfx_t s_sfx;
+static uint32_t s_mic_seen;                 // 最近一次收到麦克风帧的 lv_tick;0 = 没在听
+static char s_ear_caption[32];              // 卡片上显示的声音互动小字(变化时刷新卡片)
+
+static void stage_sync_idle(void);
+
+static void stage_ensure(void) {
+    if (!s_stage_ready) {
+        lynn_stage_init(&s_stage, lv_rand(1, 0x7FFFFFFF));
+        lynn_ear_init(&s_ear, lv_rand(1, 0x7FFFFFFF));
+        s_stage_ready = true;
+    }
+}
+
+static unsigned stage_pages(void) {
+    lv_obj_update_layout(s.stage_line);
+    int lines = (lv_obj_get_height(s.stage_line) + STAGE_LINE_SPACE) / STAGE_STEP;
+    return lines <= STAGE_LINES ? 1 : (unsigned)((lines + STAGE_LINES - 1) / STAGE_LINES);
+}
+
+static void stage_card(void) {
+    if (!s.stage_line) return;
+    if (strcmp(lv_label_get_text(s.stage_line), s_bot_text)) {
+        lv_label_set_text(s.stage_line, s_bot_text);
+        s_bot_page = 0;
+    }
+    unsigned pages = stage_pages();
+    if (s_bot_page >= pages) s_bot_page = 0;
+    lv_obj_set_y(s.stage_line, -(int)s_bot_page * STAGE_LINES * STAGE_STEP);
+    if (pages > 1) lv_label_set_text_fmt(s.stage_page, "%u/%u", s_bot_page + 1u, pages);
+    else lv_label_set_text(s.stage_page, "");
+    snprintf(s_ear_caption, sizeof(s_ear_caption), "%s", s_ear_view.caption ? s_ear_view.caption : "");
+    if (s_ear_caption[0]) {
+        lv_label_set_text_fmt(s.stage_cap, "声音 · %s", s_ear_caption);
+    } else {
+        const char *kind = s_stage.action < 0 ? "" : lynn_stage_busy(&s_stage) ? "互动 · " : "待机 · ";
+        lv_label_set_text_fmt(s.stage_cap, "%s%s", kind, lynn_stage_action_name(&s_stage));
+    }
+    s_stage_shown = s_stage.action;
+}
+
+// 只重绘"上一帧 ∪ 本帧"内容所在的矩形(换成 3 倍后的屏幕坐标),而不是整个 240x228 舞台。
+static void stage_invalidate(const lynn_rect_t *now) {
+    lynn_rect_t u = *now;
+    if (s_stage_prev.x1 <= s_stage_prev.x2) {
+        if (s_stage_prev.x1 < u.x1) u.x1 = s_stage_prev.x1;
+        if (s_stage_prev.y1 < u.y1) u.y1 = s_stage_prev.y1;
+        if (s_stage_prev.x2 > u.x2) u.x2 = s_stage_prev.x2;
+        if (s_stage_prev.y2 > u.y2) u.y2 = s_stage_prev.y2;
+    }
+    s_stage_prev = *now;
+    if (u.x1 > u.x2) return;
+    lv_area_t a;
+    lv_obj_get_coords(s.stage, &a);
+    // 有变化就整块舞台重绘:LVGL 缩放图片时的采样步长由重绘区域的宽高推算,大小不同的局部重绘会差
+    // 一行/一列,留下细线(人物被吹到边缘、风吹过时很明显)。人物本身几乎占满舞台高度,多画的不多。
+    (void)u;
+    lv_obj_invalidate(s.stage);
+}
+
+// 取完麦克风队列交给耳朵。帧停了(录音、离开本页、关掉麦克风)半秒以上就结束进行中的声音反应。
+static bool ear_listen(uint32_t now) {
+    mic_frame_t f;
+    bool got = false;
+    while (s_mic_pop && s_mic_pop(&f)) {
+        lynn_ear_feed(&s_ear, &f);
+        got = true;
+    }
+    if (got) {
+        s_mic_seen = now ? now : 1;
+    } else if (s_mic_seen && now - s_mic_seen > 500) {
+        s_mic_seen = 0;
+        lynn_ear_reset(&s_ear);
+        return true;
+    }
+    return false;
+}
+
+// 耳朵前进一拍:接管/放开姿势,执行一次性请求。返回 true 表示道具在动,需要重绘。
+static bool ear_tick(void) {
+    const char *id = lynn_stage_action_id(&s_stage);
+    bool drowsy = !s_stage.live && (strcmp(id, "doze") == 0 || strcmp(id, "sleep") == 0);
+    lynn_ear_tick(&s_ear, drowsy, &s_ear_view);
+    lynn_stage_live(&s_stage, s_ear_view.live ? &s_ear_view.pose : NULL);
+    lynn_ear_cue_t cue;
+    while (lynn_ear_take_cue(&s_ear, &cue)) {
+        if (cue.action) lynn_stage_play(&s_stage, cue.action);
+        if (cue.line) ui_lynn_bot_text(cue.line);
+        if (cue.sfx && s_sfx) s_sfx();
+    }
+    const lynn_ear_view_t *v = &s_ear_view;
+    return v->vu || v->wind || v->cake || v->eq || v->star || v->sparkle || v->smoke;
+}
+
+static void stage_tick(lv_timer_t *t) {
+    (void)t;
+    if (!s.stage) return;
+    // 按真实时间推进:渲染掉帧时补走 tick,动作时长与运动速度不受帧率影响。
+    const uint32_t period = 1000 / LYNN_TICK_HZ;
+    uint32_t now = lv_tick_get();
+    uint32_t due = (now - s_stage_clock) / period;
+    if (due > 6) {                      // 卡顿太久(如换页)时不追,直接跳到现在
+        s_stage_clock = now - period;
+        due = 1;
+    }
+    bool changed = ear_listen(now);
+    for (uint32_t i = 0; i < due; i++) {
+        changed |= ear_tick();                  // 先决定本拍姿势,再让舞台走这一拍
+        changed |= lynn_stage_tick(&s_stage);
+    }
+    s_stage_clock += due * period;
+    if (changed) {
+        lynn_rect_t box;
+        lynn_stage_render(&s_stage, s_stage_buf, &box);
+        lynn_ear_render(&s_ear_view, s_ear.ticks, s_stage_buf, &box);
+        stage_invalidate(&box);
+        s_fps_frames++;
+    }
+    if (now - s_fps_window >= 1000) {
+        s_fps = s_fps_frames;
+        s_fps_frames = 0;
+        s_fps_window = now;
+    }
+    if (s_stage.action != s_stage_shown || strcmp(s_ear_view.caption ? s_ear_view.caption : "", s_ear_caption)) {
+        stage_card();
+    }
+}
+
+// Pixel tail under the bubble, drawn as a narrowing staircase toward the mouth
+// (screen x ~122). Row 0 overwrites the card's bottom border to open the joint.
+static void stage_tail(lv_obj_t *scr, int y) {
+    for (int i = 0; i < 9; i++) {
+        int xl = 112 + i, w = i == 8 ? 2 : 18 - i * 2 + i;   // left edge slants, right edge steps faster
+        w = 18 - i - (i + 1) / 2 * 1;
+        if (w < 2) w = 2;
+        if (i) box(scr, xl, y + i, w, 1, C_INK7);
+        if (w > 2) box(scr, xl + 1, y + i, w - 2, 1, C_CARD);
+    }
+}
+
+static void build_lynn(lv_obj_t *scr) {
+    stage_ensure();
+    // Speech bubble: up to three wrapped lines, tail pointing down at Lynn's mouth.
+    lv_obj_t *c = card(scr, X0 - 4, 32, XW + 6, 60);
+    // Three-line window; longer text pages with an OK tap (label scrolls inside).
+    s.stage_view = box(c, 8, 4, XW - 10, STAGE_PAGE_H, -1);
+    s.stage_line = label(s.stage_view, &ui_font_12, C_INK, 0, 0, XW - 10, "");
+    lv_label_set_long_mode(s.stage_line, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_height(s.stage_line, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_line_space(s.stage_line, STAGE_LINE_SPACE, 0);
+    s.stage_cap = label(c, &ui_font_12, C_MUTED, 8, 43, XW - 50, "");
+    s.stage_page = label_right(c, &ui_font_12, C_FAINT, XW - 50, 43, 40, "");
+    stage_tail(scr, 32 + 60 - 1);
+    s.stage = lv_canvas_create(scr);
+    lv_canvas_set_buffer(s.stage, s_stage_buf, LYNN_STAGE_W, LYNN_STAGE_H, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(s.stage, 0, 76);
+    lv_obj_set_size(s.stage, LYNN_STAGE_W * 3, LYNN_STAGE_H * 3);
+    lv_image_set_inner_align(s.stage, LV_IMAGE_ALIGN_STRETCH);   // 240x228 = 80x76 的整数 3 倍
+    lv_image_set_antialias(s.stage, false);
+    lv_obj_move_to_index(s.stage, 0);                             // 画布在最底层,卡片与页签压在上面
+    lynn_stage_render(&s_stage, s_stage_buf, &s_stage_prev);
+    stage_card();
+    s_stage_clock = lv_tick_get();
+    s.stage_timer = lv_timer_create(stage_tick, 1000 / LYNN_TICK_HZ / 2, NULL);   // 半拍轮询,按真实时间走帧
+    s.stage_paused = false;
+    stage_sync_idle();
+}
+
+// 舞台定时器跟随屏幕阶段:关屏时暂停(省电),任何方式唤醒(按键、拍手、agent、新动态)都会
+// 经过 ui_refresh 恢复。恢复时重置时钟,不去补关屏期间的 tick。
+static void stage_sync_idle(void) {
+    if (!s.stage_timer) return;
+    bool paused = s.idle == APP_IDLE_OFF;
+    if (paused == s.stage_paused) return;
+    s.stage_paused = paused;
+    if (paused) {
+        lv_timer_pause(s.stage_timer);
+    } else {
+        s_stage_clock = lv_tick_get();
+        lv_timer_resume(s.stage_timer);
+    }
+}
+
+bool ui_lynn_play(const char *id, const char *line) {
+    stage_ensure();
+    if (id && strcmp(id, "cake") == 0) {     // 生日蛋糕不是时间轴动作,由耳朵接管(对着麦克风吹蜡烛)
+        lynn_ear_cake(&s_ear);
+        if (line) ui_lynn_bot_text(line);
+        return true;
+    }
+    if (line) { lynn_stage_say(&s_stage, line); ui_lynn_bot_text(line); }
+    if (id) {
+        if (lynn_stage_play(&s_stage, id) < 0) {
+            if (line) lynn_stage_say(&s_stage, NULL);
+            return false;
+        }
+    } else {
+        lynn_stage_play_random(&s_stage);
+    }
+    stage_card();
+    return true;
+}
+
+bool ui_lynn_page_next(void) {
+    if (!s.stage_line) return false;
+    unsigned pages = stage_pages();
+    if (pages < 2) return false;
+    s_bot_page = (uint8_t)((s_bot_page + 1) % pages);
+    stage_card();
+    return true;
+}
+
+void ui_lynn_say(const char *text) {
+    stage_ensure();
+    lynn_stage_say(&s_stage, text);
+    if (text) ui_lynn_bot_text(text);
+    stage_card();
+}
+
+// Unknown network glyphs have a deliberate visible replacement. The font
+// covers ASCII and GB2312 level-one Hanzi, not all Unicode/emoji.
+void ui_lynn_bot_text(const char *text) {
+    if (!text) return;
+    size_t out = 0;
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p && out + 1 < sizeof(s_bot_text)) {
+        const unsigned char *start = p;
+        uint32_t cp = *p++;
+        unsigned count = 0;
+        if (cp >= 0xf0) { cp &= 7; count = 3; }
+        else if (cp >= 0xe0) { cp &= 15; count = 2; }
+        else if (cp >= 0xc0) { cp &= 31; count = 1; }
+        while (count-- && *p) cp = (cp << 6) | (*p++ & 63);
+        lv_font_glyph_dsc_t glyph;
+        bool supported = cp != '\n' && lv_font_get_glyph_dsc(&ui_font_12, &glyph, cp, 0) && !glyph.is_placeholder;
+        size_t bytes = (size_t)(p - start);
+        if (supported && out + bytes < sizeof(s_bot_text)) {
+            memcpy(s_bot_text + out, start, bytes);
+            out += bytes;
+        } else s_bot_text[out++] = cp == '\n' ? ' ' : '?';
+    }
+    s_bot_text[out] = 0;
+    stage_card();
+}
+
+void ui_lynn_set_ears(ui_mic_pop_t pop, ui_sfx_t sfx) {
+    s_mic_pop = pop;
+    s_sfx = sfx;
+}
+
+void ui_lynn_ear_status(char *buf, size_t cap) {
+    stage_ensure();
+    const mic_frame_t *f = &s_ear.last;
+    snprintf(buf, cap, "listening=%d mode=%s level=%u voiced=%d pitch=%u tilt=%d stars=%u",
+             s_mic_seen != 0, s_ear.mode == EAR_NONE ? "none" : lynn_ear_mode_name(s_ear.mode),
+             (unsigned)f->level, f->voiced, (unsigned)f->pitch_hz, f->tilt, (unsigned)s_ear.score);
+}
+
+void ui_lynn_status(char *buf, size_t cap) {
+    stage_ensure();
+    snprintf(buf, cap, "action=%s fps=%u line=\"%s\"", lynn_stage_action_id(&s_stage), (unsigned)s_fps,
+             lynn_stage_line(&s_stage));
 }
 
 // ---------------------------------------------------------------------------
@@ -874,6 +1166,10 @@ void ui_build(const ui_model_t *m) {
         s.toast_timer = NULL;
     }
     if (s.toast) lv_anim_delete(s.toast, toast_set_y);
+    if (s.stage_timer) {
+        lv_timer_delete(s.stage_timer);
+        s.stage_timer = NULL;
+    }
     // 清空旧页的控件指针(定时器回调可能还会访问它们)。
     lv_timer_t *anim = s.anim_timer;
     uint8_t idle = s.idle;
@@ -888,12 +1184,14 @@ void ui_build(const ui_model_t *m) {
     if (old) lv_obj_delete(old);
     s.built_provisioning = m->provisioning;
     s.built_page = m->nav->page;
-    static const char *titles[APP_PAGE_COUNT] = { "AstraFoundry", "AstraFoundry", "AstraFoundry", "Astra Monitor" };
+    static const char *titles[APP_PAGE_COUNT] = { "Lynn", "AstraFoundry", "AstraFoundry", "AstraFoundry",
+                                                  "Astra Monitor" };
     build_chrome(s.scr, m->provisioning ? "Astra Monitor" : titles[m->nav->page], !m->provisioning);
     if (m->provisioning) {
         build_provisioning(s.scr);
     } else {
         switch (m->nav->page) {
+        case APP_PAGE_LYNN:   build_lynn(s.scr); break;
         case APP_PAGE_HOME:   build_home(s.scr); break;
         case APP_PAGE_FEED:   build_feed(s.scr); break;
         case APP_PAGE_REPOS:  build_repos(s.scr); break;
@@ -912,6 +1210,7 @@ void ui_refresh(const ui_model_t *m) {
         return;
     }
     s.idle = m->idle;
+    stage_sync_idle();
     refresh_chrome(m);
     if (m->provisioning) {
         refresh_provisioning(m);
@@ -919,6 +1218,7 @@ void ui_refresh(const ui_model_t *m) {
     }
     switch (m->nav->page) {
     case APP_PAGE_HOME:   refresh_home(m); break;
+    case APP_PAGE_LYNN:   break;           // 舞台由自己的 24 fps 定时器刷新
     case APP_PAGE_FEED:   refresh_feed(m); break;
     case APP_PAGE_REPOS:  refresh_repos(m); break;
     case APP_PAGE_SYSTEM: refresh_system(m); break;

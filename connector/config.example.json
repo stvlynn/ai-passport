@@ -1,0 +1,17 @@
+{
+  "port": 18787,
+  "publicHost": "connector.example.com",
+  "botId": "replace-with-routine-bot-id",
+  "botName": "Lynn",
+  "deviceToken": "REPLACE_WITH_RANDOM_DEVICE_TOKEN_AT_LEAST_32_CHARS",
+  "toolToken": "REPLACE_WITH_A_DIFFERENT_RANDOM_TOOL_TOKEN_AT_LEAST_32_CHARS",
+  "webhookURL": "https://grok.com/replace-with-official-routine-webhook",
+  "webhookKey": "REPLACE_WITH_ROUTINE_WEBHOOK_KEY",
+  "stateDir": "./state",
+  "asr": {
+    "command": "/opt/homebrew/bin/whisper-cli",
+    "args": ["-m", "/absolute/path/to/ggml-model.bin", "-f", "{input}", "-otxt", "-of", "{outputBase}", "-nt"],
+    "output": "file",
+    "timeoutMs": 120000
+  }
+}

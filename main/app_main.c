@@ -11,6 +11,7 @@
 // 不参与本应用的构建,仅为宿主测试与参考保留。
 #include "app_audio.h"
 #include "app_console.h"
+#include "app_grok.h"
 #include "app_nav.h"
 #include "app_net.h"
 #include "app_settings.h"
@@ -43,6 +44,7 @@ static const char *TAG = "astra";
 
 #define DIM_PERCENT        12
 #define TICK_MS            250
+#define PTT_TAP_MS         250    // shorter OK press on the Lynn page = next page
 #define BATTERY_PERIOD_MS  30000
 #define PROV_DONE_LINGER_MS 3000
 #define CONFIRM_WINDOW_MS  3000
@@ -54,6 +56,7 @@ typedef enum {
     EV_NET,
     EV_CLAP,
     EV_CONSOLE,
+    EV_LYNN_SHOW,           // agent 让 Lynn 做了动作:切到 Lynn 页并点亮屏幕
 } ev_type_t;
 
 typedef struct {
@@ -64,6 +67,10 @@ typedef struct {
 
 static QueueHandle_t s_events;
 static TaskHandle_t s_sync_task;
+static QueueHandle_t s_grok_events;
+static int64_t s_ptt_down_at;     // OK press time while recording (0 = none)
+static int64_t s_ptt_busy_at;     // OK press time while a turn was already in flight
+static bool s_ptt_shown;
 
 // sync → app 的交接区
 static SemaphoreHandle_t s_handoff_lock;
@@ -99,9 +106,21 @@ static void post(ev_type_t type, uint8_t a, uint8_t b) {
 static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
     (void)user;
     // 上/下 长按留给"戳看板娘";上/下 双击不使用(单击即翻页)。
-    if (ev == BSP_BTN_CLICK || ev == BSP_BTN_LONG || (btn == BSP_BTN_OK && ev == BSP_BTN_DOUBLE)) {
+    // OK 的按下/抬起只用于 Lynn 页按住说话(push-to-talk)。
+    if (ev == BSP_BTN_CLICK || ev == BSP_BTN_LONG ||
+        (btn == BSP_BTN_OK && (ev == BSP_BTN_DOUBLE || ev == BSP_BTN_PRESS || ev == BSP_BTN_RELEASE))) {
         post(EV_KEY, (uint8_t)btn, (uint8_t)ev);
     }
+}
+
+static bool on_grok(const grok_event_t *event) {
+    return xQueueSend(s_grok_events, event, 0) == pdTRUE;
+}
+
+static void on_grok_status(const char *text) {
+    grok_event_t event = { .present = true };
+    strlcpy(event.text, text, sizeof(event.text));
+    on_grok(&event);
 }
 
 static void on_net(void) {
@@ -110,6 +129,10 @@ static void on_net(void) {
 
 static void on_clap(void) {
     post(EV_CLAP, 0, 0);
+}
+
+static void lynn_sfx(void) {
+    app_audio_play(SOUND_TICK);
 }
 
 static void on_console(app_console_cmd_t cmd) {
@@ -134,8 +157,10 @@ static void sync_task(void *arg) {
             detail[0] = '\0';
         } else {
             post(EV_SYNC_START, 0, 0);
+            app_grok_network_lock();
             r = gh_fetch_snapshot(CONFIG_ASTRA_GH_ORG, token, (int64_t)time(NULL), &buf,
                                   detail, sizeof(detail));
+            app_grok_network_unlock();
         }
         memset(token, 0, sizeof(token));
         xSemaphoreTake(s_handoff_lock, portMAX_DELAY);
@@ -220,6 +245,10 @@ static void refresh_model(void) {
     int64_t next = CONFIG_ASTRA_REFRESH_SECONDS - (now_ms() - s_last_sync_ms) / 1000;
     s_model.next_sync_in_s = next < 0 ? 0 : next;
     s_model.idle = (uint8_t)s_nav.idle;
+    bool lynn_awake = !s_provisioning && s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE;
+    app_grok_set_active(lynn_awake);
+    // Lynn 页亮屏时她一直在听(本地处理,不上传);"麦克风"开关同时管拍手唤醒与这里。
+    app_audio_set_sensing(lynn_awake && s_model.prefs.clap_wake);
     update_today();
 }
 
@@ -357,7 +386,7 @@ static void run_menu(ui_menu_t item) {
         app_audio_set_enabled(p.sound_on);
         break;
     case UI_MENU_CLAP:
-        show_message(false, "拍手唤醒", p.clap_wake ? "已开启:息屏时拍两下手" : "已关闭");
+        show_message(false, "麦克风", p.clap_wake ? "已开启:拍手唤醒、Lynn 听声音" : "已关闭");
         break;
     case UI_MENU_SCREEN_OFF:
         if (p.screen_off_min) {
@@ -382,14 +411,36 @@ static app_key_t map_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     return APP_KEY_OK;
 }
 
-// 总览页长按 上/下:戳一下 Lynn。息屏时先唤醒(唤醒那一下不算戳)。
+// 串口 / agent 工具命令(在 console 任务中执行)。
+static bool on_lynn_cmd(const char *verb, const char *arg, const char *line, char *out, size_t cap) {
+    if (!bsp_lvgl_lock(500)) return false;
+    bool ok = true;
+    if (strcmp(verb, "play") == 0) {
+        ok = ui_lynn_play(arg, line);
+    } else if (strcmp(verb, "say") == 0) {
+        ui_lynn_say(arg);
+    } else if (strcmp(verb, "status") == 0) {
+        ui_lynn_status(out, cap);
+    } else if (strcmp(verb, "ear") == 0) {
+        ui_lynn_ear_status(out, cap);
+    } else {
+        ok = false;
+    }
+    bsp_lvgl_unlock();
+    if (ok && strcmp(verb, "status") != 0 && strcmp(verb, "ear") != 0) post(EV_LYNN_SHOW, 0, 0);
+    return ok;
+}
+
+// 总览页 / Lynn 页长按 上/下:戳一下 Lynn。息屏时先唤醒(唤醒那一下不算戳)。
 static void poke_lynn(void) {
     if (app_nav_poke(&s_nav, now_ms())) {
         apply_backlight();
         ui_update(false);
         return;
     }
-    if (s_provisioning || s_nav.page != APP_PAGE_HOME) return;
+    if (s_provisioning) return;
+    if (s_nav.page == APP_PAGE_LYNN) return;
+    if (s_nav.page != APP_PAGE_HOME) return;
     refresh_model();
     if (!bsp_lvgl_lock(500)) return;
     bool poked = ui_poke(&s_model);
@@ -406,6 +457,49 @@ static void handle_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     if (s_provisioning) {
         app_nav_poke(&s_nav, now_ms());
         if (key == APP_KEY_OK_LONG) provisioning_exit();
+        return;
+    }
+    // Lynn: hold OK to talk (recording starts on press, sent on release).
+    // Clicks are consumed so a talk never also triggers page actions.
+    bool lynn_talk = s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE;
+    // Recording starts on press (optimistic); a release within PTT_TAP_MS is a
+    // tap that pages the bubble instead, and its audio is dropped.
+    if (btn == BSP_BTN_OK && ev == BSP_BTN_PRESS) {
+        if (lynn_talk) {
+            app_nav_poke(&s_nav, now_ms());
+            s_ptt_down_at = now_ms();
+            s_ptt_shown = false;
+            if (!app_grok_ptt_down()) {
+                s_ptt_down_at = 0;
+                s_ptt_busy_at = now_ms();  // paging still works while a turn is in flight
+            }
+        }
+        return;
+    }
+    if (btn == BSP_BTN_OK && ev == BSP_BTN_RELEASE) {
+        int64_t t = now_ms();
+        if (s_ptt_busy_at) {
+            bool held = t - s_ptt_busy_at >= PTT_TAP_MS;
+            s_ptt_busy_at = 0;
+            if (held) { on_grok_status("Busy. Wait for Grok, then hold OK"); return; }
+        }
+        bool tap = !s_ptt_down_at || t - s_ptt_down_at < PTT_TAP_MS;
+        bool was_rec = s_ptt_down_at != 0;
+        s_ptt_down_at = 0;
+        if (tap) {
+            if (was_rec) (void)app_grok_ptt_up(true);
+            if (lynn_talk && bsp_lvgl_lock(500)) {
+                (void)ui_lynn_page_next();
+                bsp_lvgl_unlock();
+            }
+            return;
+        }
+        // Feedback right away: the TLS connect may still take a few seconds.
+        if (app_grok_ptt_up(false)) on_grok_status("Sending...");
+        return;
+    }
+    if (lynn_talk && btn == BSP_BTN_OK) {
+        app_nav_poke(&s_nav, now_ms());
         return;
     }
     switch (app_nav_key(&s_nav, key, now_ms())) {
@@ -458,7 +552,8 @@ static void app_task(void *arg) {
     net_link_t last_link = NET_LINK_NO_CREDENTIALS;
     for (;;) {
         app_event_t ev;
-        if (xQueueReceive(s_events, &ev, pdMS_TO_TICKS(TICK_MS)) == pdTRUE) {
+        TickType_t wait = pdMS_TO_TICKS(s_ptt_down_at && !s_ptt_shown ? 40 : TICK_MS);
+        if (xQueueReceive(s_events, &ev, wait) == pdTRUE) {
             switch (ev.type) {
             case EV_KEY:
                 handle_key((bsp_btn_t)ev.a, (bsp_btn_ev_t)ev.b);
@@ -481,6 +576,16 @@ static void app_task(void *arg) {
                 ui_update(false);
                 break;
             }
+            case EV_LYNN_SHOW:
+                if (s_provisioning) break;
+                if (app_nav_poke(&s_nav, now_ms())) apply_backlight();
+                if (s_nav.page != APP_PAGE_LYNN) {
+                    s_nav.page = APP_PAGE_LYNN;
+                    ui_update(true);
+                } else {
+                    ui_update(false);           // 已在 Lynn 页:刷新一次,关屏后被暂停的舞台随之恢复
+                }
+                break;
             case EV_CLAP:
                 if (app_nav_poke(&s_nav, now_ms())) {
                     apply_backlight();
@@ -494,7 +599,8 @@ static void app_task(void *arg) {
                     static const struct { bsp_btn_t btn; bsp_btn_ev_t ev; } K[] = {
                         { BSP_BTN_UP, BSP_BTN_CLICK }, { BSP_BTN_DOWN, BSP_BTN_CLICK },
                         { BSP_BTN_OK, BSP_BTN_CLICK }, { BSP_BTN_OK, BSP_BTN_DOUBLE },
-                        { BSP_BTN_OK, BSP_BTN_LONG },
+                        { BSP_BTN_OK, BSP_BTN_LONG }, { BSP_BTN_OK, BSP_BTN_PRESS },
+                        { BSP_BTN_OK, BSP_BTN_RELEASE },
                     };
                     int i = ev.a - APP_CONSOLE_KEY_UP;
                     handle_key(K[i].btn, K[i].ev);
@@ -505,7 +611,25 @@ static void app_task(void *arg) {
             }
         }
 
+        grok_event_t grok_event;
+        while (xQueueReceive(s_grok_events, &grok_event, 0) == pdTRUE) {
+            // Background events never navigate away from another page.
+            if (s_provisioning || s_nav.page != APP_PAGE_LYNN || s_nav.idle != APP_IDLE_AWAKE) continue;
+            app_nav_poke(&s_nav, now_ms());
+            if (bsp_lvgl_lock(500)) {
+                if (grok_event.action[0]) ui_lynn_play(grok_event.action, NULL);
+                if (grok_event.text[0]) ui_lynn_bot_text(grok_event.text);
+                bsp_lvgl_unlock();
+            }
+        }
+
         int64_t t = now_ms();
+        // 正在和 Lynn 用声音玩(吹气、哼歌、拍手……)时不要变暗。
+        if (s_nav.page == APP_PAGE_LYNN && app_audio_sense_heard(1000)) (void)app_nav_poke(&s_nav, t);
+        if (s_ptt_down_at && !s_ptt_shown && t - s_ptt_down_at >= PTT_TAP_MS) {
+            s_ptt_shown = true;            // a real hold, not a page tap
+            on_grok_status("Listening... release OK to send");
+        }
         if (s_provisioning) {
             app_nav_poke(&s_nav, t);
             if (s_prov_done_at && t - s_prov_done_at > PROV_DONE_LINGER_MS) provisioning_exit();
@@ -536,8 +660,9 @@ static void app_task(void *arg) {
 void app_main(void) {
     ESP_LOGI(TAG, "Astra Monitor 启动,组织 %s", CONFIG_ASTRA_GH_ORG);
     s_events = xQueueCreate(16, sizeof(app_event_t));
+    s_grok_events = xQueueCreate(4, sizeof(grok_event_t));
     s_handoff_lock = xSemaphoreCreateMutex();
-    if (!s_events || !s_handoff_lock) return;
+    if (!s_events || !s_handoff_lock || !s_grok_events) return;
 
     bsp_i2c_init();
     if (bsp_display_init() != ESP_OK || !bsp_lvgl_init()) {
@@ -572,12 +697,24 @@ void app_main(void) {
     app_audio_set_enabled(app_settings_prefs().sound_on);
     app_audio_play(SOUND_BOOT);
 
+    err = app_grok_start(on_grok, on_grok_status);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Connector worker unavailable: %s", esp_err_to_name(err));
+        return;
+    }
+    refresh_model();
+
     if (xTaskCreate(app_task, "app", 6144, NULL, 5, NULL) != pdPASS ||
         xTaskCreate(sync_task, "sync", 8192, NULL, 4, &s_sync_task) != pdPASS) {
         ESP_LOGE(TAG, "任务创建失败");
         return;
     }
     if (bsp_button_init(on_key, NULL) != ESP_OK) ESP_LOGE(TAG, "按键初始化失败");
+    app_console_set_lynn(on_lynn_cmd);
+    if (bsp_lvgl_lock(1000)) {
+        ui_lynn_set_ears(app_audio_sense_pop, lynn_sfx);
+        bsp_lvgl_unlock();
+    }
     app_console_start(on_console);
     ESP_LOGI(TAG, "就绪:audio=%d 空闲堆 %u", audio_ok, (unsigned)esp_get_free_heap_size());
 }

@@ -28,6 +28,7 @@
   <a href="#文档索引">开发文档</a>
 </p>
 
+
 ---
 
 **FoloToy AI Passport** 是开放的可穿戴 AI 平台，人人都可以动手改造、自由创作。
@@ -207,6 +208,7 @@ LICENSE                  仓库许可证
 | [社区作品与经验](reference/README.zh_CN.md) | `docs/reference/<username>/` 下的应用档案和可复用知识 |
 | [参与贡献](contribution/README.zh_CN.md) | 文档、提交与 Pull Request 约定 |
 | [品牌素材](brand/README.zh_CN.md) | 产品视觉参考与[品牌说明](brand/brand-and-product.zh_CN.md) |
+| [Lynn Grok Bot 连接器](../connector/README.zh_CN.md) | Mac 服务、语音输入、MCP 动画工具与部署 |
 | [Fork 指南](fork-guide.zh_CN.md) · [更新记录](CHANGELOG.zh_CN.md) | 下游工作流与版本历史 |
 
 ---
