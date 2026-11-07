@@ -128,8 +128,16 @@ int main(void) {
     unsigned before = notifications;
     app_grok_set_active(true); app_grok_set_active(true);
     assert(notifications == before); // Model refreshes do not create a tight poll loop.
+    // A tap (OK page flip) is dropped before any connection, without a status.
+    reset();
+    rec_total = 400;
+    s_ptt_cancel = true;
+    assert(upload(&test_config, s_generation, buf) && closed == 0 && writes == 0 && statuses == 0);
+    s_ptt_cancel = false;
     assert(app_grok_ptt_down() && !app_grok_ptt_down());   // one turn at a time
-    app_grok_ptt_up();
+    assert(!s_ptt_cancel);
+    app_grok_ptt_up(true);
+    assert(s_ptt_cancel);
     puts("app_grok_transport: PASS");
     return 0;
 }

@@ -2,6 +2,8 @@
 #include "app_net.h"
 
 #include "app_portal.h"
+#include "app_settings.h"
+#include "nvs.h"
 
 #include "esp_event.h"
 #include "esp_log.h"
@@ -27,6 +29,9 @@ static const char *TAG = "net";
 #define TIME_VALID_AFTER   1767225600   // 2026-01-01:早于此视为未校时
 
 static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_config_lock; // Serializes profile changes, trials and reconnects.
+static wifi_profiles_t s_profiles;
+static wifi_profile_t s_trial_profile;
 static net_status_t s_st;
 static net_listener_t s_listener;
 static esp_netif_t *s_sta;
@@ -76,7 +81,8 @@ static void connect_now(void) {
     wifi_config_t cfg = { 0 };
     esp_wifi_get_config(WIFI_IF_STA, &cfg);
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    strlcpy(s_st.ssid, (const char *)cfg.sta.ssid, sizeof(s_st.ssid));
+    memcpy(s_st.ssid, cfg.sta.ssid, sizeof(cfg.sta.ssid));
+    s_st.ssid[32] = 0;
     xSemaphoreGive(s_lock);
     set_link(NET_LINK_CONNECTING);
     esp_err_t err = esp_wifi_connect();
@@ -87,7 +93,21 @@ static void connect_now(void) {
 
 static void retry_cb(void *arg) {
     (void)arg;
-    connect_now();
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    if (!s_prov_active && !s_trial && s_profiles.count &&
+        s_st.link != NET_LINK_ONLINE && s_st.link != NET_LINK_CONNECTING) {
+        wifi_config_t current = {0};
+        esp_wifi_get_config(WIFI_IF_STA, &current);
+        char ssid[33] = {0};
+        memcpy(ssid, current.sta.ssid, sizeof(current.sta.ssid));
+        int index = wifi_profiles_find(&s_profiles, ssid);
+        unsigned next = (unsigned)(index + 1) % s_profiles.count;
+        wifi_config_t cfg = {0};
+        memcpy(cfg.sta.ssid, s_profiles.entries[next].ssid, sizeof(cfg.sta.ssid));
+        memcpy(cfg.sta.password, s_profiles.entries[next].password, sizeof(s_profiles.entries[next].password));
+        if (esp_wifi_set_config(WIFI_IF_STA, &cfg) == ESP_OK) connect_now();
+    }
+    xSemaphoreGive(s_config_lock);
 }
 
 static void schedule_retry(void) {
@@ -115,10 +135,12 @@ static void trial_fail(const char *why);
 
 static void trial_timeout_cb(void *arg) {
     (void)arg;
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
     trial_fail("timeout");
+    xSemaphoreGive(s_config_lock);
 }
 
-static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
+static void wifi_event_locked(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg;
     (void)base;
     switch (id) {
@@ -165,14 +187,25 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
-static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
+static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    wifi_event_locked(arg, base, id, data);
+    xSemaphoreGive(s_config_lock);
+}
+
+static void ip_event_locked(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg;
     (void)base;
     if (id != IP_EVENT_STA_GOT_IP) return;
+    // Ignore an IP event queued by the previous association during a switch.
+    wifi_ap_record_t connected;
+    if (esp_wifi_sta_get_ap_info(&connected) != ESP_OK) return;
+    if (s_trial && strncmp((const char *)connected.ssid, s_trial_profile.ssid, 32) != 0) return;
     const ip_event_got_ip_t *ev = data;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     snprintf(s_st.ip, sizeof(s_st.ip), IPSTR, IP2STR(&ev->ip_info.ip));
     xSemaphoreGive(s_lock);
+    esp_timer_stop(s_retry_timer);
     s_backoff_ms = BACKOFF_MIN_MS;
     ESP_LOGI(TAG, "已联网 IP=%s", s_st.ip);
     if (!s_sntp_started) {
@@ -182,18 +215,33 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
         if (esp_netif_sntp_init(&cfg) == ESP_OK) s_sntp_started = true;
     }
     if (s_trial) {
+        wifi_profiles_t updated = s_profiles;
+        wifi_profiles_put(&updated, &s_trial_profile);
+        if (app_settings_set_wifi(&updated) != ESP_OK) {
+            trial_fail("storage");
+            return;
+        }
+        s_profiles = updated;
         s_trial = false;
+        memset(&s_trial_profile, 0, sizeof(s_trial_profile));
         esp_timer_stop(s_trial_timer);
-        ESP_LOGI(TAG, "配网:新 Wi-Fi 已连上");
+        ESP_LOGI(TAG, "配网:新 Wi-Fi 已连上并保存");
         set_prov(NET_PROV_DONE);
     }
     set_link(NET_LINK_ONLINE);
 }
 
+static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    ip_event_locked(arg, base, id, data);
+    xSemaphoreGive(s_config_lock);
+}
+
 esp_err_t app_net_init(net_listener_t listener) {
     s_listener = listener;
     s_lock = xSemaphoreCreateMutex();
-    if (!s_lock) return ESP_ERR_NO_MEM;
+    s_config_lock = xSemaphoreCreateMutex();
+    if (!s_lock || !s_config_lock) return ESP_ERR_NO_MEM;
     setenv("TZ", CONFIG_ASTRA_TZ, 1);
     tzset();
 
@@ -215,8 +263,32 @@ esp_err_t app_net_init(net_listener_t listener) {
     if (err != ESP_OK) return err;
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event, NULL, NULL));
-    err = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
-    if (err == ESP_OK) err = esp_wifi_set_mode(WIFI_MODE_STA);
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) return err;
+    // Import the old single-network configuration exactly once. An empty saved
+    // list is authoritative too, so clearing cannot resurrect old credentials.
+    err = app_settings_wifi(&s_profiles);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        wifi_config_t legacy = {0};
+        err = esp_wifi_get_config(WIFI_IF_STA, &legacy);
+        if (err != ESP_OK) return err;
+        if (legacy.sta.ssid[0]) {
+            wifi_profile_t profile = {0};
+            memcpy(profile.ssid, legacy.sta.ssid, sizeof(legacy.sta.ssid));
+            memcpy(profile.password, legacy.sta.password, sizeof(profile.password) - 1);
+            if (!wifi_profiles_put(&s_profiles, &profile)) return ESP_ERR_INVALID_ARG;
+        }
+        err = app_settings_set_wifi(&s_profiles);
+    }
+    if (err != ESP_OK) return err;
+    // Trial credentials never overwrite the persisted list, even across a reset.
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    wifi_config_t initial = {0};
+    if (s_profiles.count) {
+        memcpy(initial.sta.ssid, s_profiles.entries[0].ssid, sizeof(initial.sta.ssid));
+        memcpy(initial.sta.password, s_profiles.entries[0].password, sizeof(s_profiles.entries[0].password));
+    }
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &initial);
     if (err == ESP_OK) err = esp_wifi_start();
     if (err == ESP_OK) esp_wifi_set_ps(WIFI_PS_MIN_MODEM);   // 与 BLE 共存时也要求开启 modem sleep
     uint8_t mac[6];
@@ -242,31 +314,73 @@ net_status_t app_net_status(void) {
 }
 
 esp_err_t app_net_set_credentials(const char *ssid, const char *password) {
-    if (!ssid || !*ssid || strlen(ssid) >= 33) return ESP_ERR_INVALID_ARG;
-    if (password && strlen(password) >= 64) return ESP_ERR_INVALID_ARG;
-    wifi_config_t cfg = { 0 };
-    strlcpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid));
-    if (password) strlcpy((char *)cfg.sta.password, password, sizeof(cfg.sta.password));
-    esp_wifi_disconnect();
-    s_reconnect_after_disconnect = false;
-    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
-    if (err != ESP_OK) return err;
-    esp_timer_stop(s_retry_timer);
-    s_backoff_ms = BACKOFF_MIN_MS;
-    connect_now();
-    return ESP_OK;
+    return app_net_try_credentials(ssid, password);
 }
 
 esp_err_t app_net_clear_credentials(void) {
-    esp_timer_stop(s_retry_timer);
-    wifi_config_t empty = { 0 };
-    esp_wifi_disconnect();
-    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &empty);
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_st.ssid[0] = '\0';
-    s_st.ip[0] = '\0';
-    xSemaphoreGive(s_lock);
-    set_link(NET_LINK_NO_CREDENTIALS);
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    wifi_profiles_t empty_profiles = {0};
+    esp_err_t err = app_settings_set_wifi(&empty_profiles);
+    if (err == ESP_OK) {
+        s_profiles = empty_profiles;
+        s_trial = false;
+        s_reconnect_after_disconnect = false;
+        memset(&s_trial_profile, 0, sizeof(s_trial_profile));
+        esp_timer_stop(s_retry_timer);
+        esp_timer_stop(s_trial_timer);
+        wifi_config_t empty = {0};
+        esp_wifi_disconnect();
+        err = esp_wifi_set_config(WIFI_IF_STA, &empty);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_st.ssid[0] = '\0';
+        s_st.ip[0] = '\0';
+        xSemaphoreGive(s_lock);
+        set_link(NET_LINK_NO_CREDENTIALS);
+    }
+    xSemaphoreGive(s_config_lock);
+    return err;
+}
+
+int app_net_saved_networks(char ssids[][33], int max) {
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    int n = s_profiles.count < max ? s_profiles.count : max;
+    for (int i = 0; i < n; i++) memcpy(ssids[i], s_profiles.entries[i].ssid, 33);
+    xSemaphoreGive(s_config_lock);
+    return n;
+}
+
+esp_err_t app_net_forget_network(const char *ssid) {
+    if (!ssid || !*ssid) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (!s_trial) {
+        wifi_profiles_t updated = s_profiles;
+        if (!wifi_profiles_remove(&updated, ssid)) err = ESP_ERR_NOT_FOUND;
+        else if ((err = app_settings_set_wifi(&updated)) == ESP_OK) {
+            s_profiles = updated;
+            wifi_config_t cfg = {0};
+            esp_wifi_get_config(WIFI_IF_STA, &cfg);
+            char current[33] = {0};
+            memcpy(current, cfg.sta.ssid, sizeof(cfg.sta.ssid));
+            if (strcmp(current, ssid) == 0) {
+                esp_timer_stop(s_retry_timer);
+                esp_wifi_disconnect();
+                memset(&cfg, 0, sizeof(cfg));
+                if (updated.count) {
+                    memcpy(cfg.sta.ssid, updated.entries[0].ssid, sizeof(cfg.sta.ssid));
+                    memcpy(cfg.sta.password, updated.entries[0].password, sizeof(updated.entries[0].password));
+                }
+                err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+                set_link(updated.count ? NET_LINK_OFFLINE : NET_LINK_NO_CREDENTIALS);
+                xSemaphoreTake(s_lock, portMAX_DELAY);
+                s_st.ssid[0] = 0;
+                s_st.ip[0] = 0;
+                xSemaphoreGive(s_lock);
+                if (!s_prov_active) schedule_retry();
+            }
+        }
+    }
+    xSemaphoreGive(s_config_lock);
     return err;
 }
 
@@ -278,6 +392,8 @@ esp_err_t app_net_clear_credentials(void) {
 static void trial_fail(const char *why) {
     if (!s_trial) return;
     s_trial = false;
+    s_reconnect_after_disconnect = false;
+    memset(&s_trial_profile, 0, sizeof(s_trial_profile));
     esp_timer_stop(s_trial_timer);
     ESP_LOGW(TAG, "配网:新 Wi-Fi 连接失败(%s),恢复原凭据", why);
     esp_wifi_disconnect();
@@ -288,26 +404,33 @@ static void trial_fail(const char *why) {
 }
 
 esp_err_t app_net_try_credentials(const char *ssid, const char *password) {
-    if (!ssid || !*ssid || strlen(ssid) >= 33) return ESP_ERR_INVALID_ARG;
-    if (password && strlen(password) >= 64) return ESP_ERR_INVALID_ARG;
-    if (password && *password && strlen(password) < 8) return ESP_ERR_INVALID_ARG;   // WPA2 下限
-    if (s_trial) return ESP_ERR_INVALID_STATE;
-
-    wifi_config_t prev = { 0 };
-    esp_wifi_get_config(WIFI_IF_STA, &prev);
-    wifi_config_t cfg = { 0 };
-    strlcpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid));
-    if (password) strlcpy((char *)cfg.sta.password, password, sizeof(cfg.sta.password));
-
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (s_trial) goto done;
+    wifi_profile_t profile;
+    if (!wifi_profiles_resolve(&s_profiles, ssid, password, &profile)) {
+        err = ESP_ERR_INVALID_ARG;
+        goto done;
+    }
+    wifi_config_t cfg = {0};
+    memcpy(cfg.sta.ssid, profile.ssid, sizeof(cfg.sta.ssid));
+    memcpy(cfg.sta.password, profile.password, sizeof(profile.password));
+    esp_wifi_get_config(WIFI_IF_STA, &s_prev_cfg);
     esp_timer_stop(s_retry_timer);
-    s_prev_cfg = prev;
+    s_trial_profile = profile;
+    memset(&profile, 0, sizeof(profile));
     s_trial_disconnects = 0;
     s_trial = true;
-    bool was_online = s_st.link == NET_LINK_ONLINE;
-    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    // Stop the current attempt before changing station configuration. Consume
+    // its delayed disconnect event without counting it against the new trial.
+    net_link_t link = app_net_status().link;
+    s_reconnect_after_disconnect = link == NET_LINK_ONLINE || link == NET_LINK_CONNECTING;
+    if (esp_wifi_disconnect() != ESP_OK) s_reconnect_after_disconnect = false;
+    err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    memset(&cfg, 0, sizeof(cfg));
     if (err != ESP_OK) {
-        s_trial = false;
-        return err;
+        trial_fail("configuration");
+        goto done;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     strlcpy(s_st.ssid, ssid, sizeof(s_st.ssid));
@@ -315,13 +438,11 @@ esp_err_t app_net_try_credentials(const char *ssid, const char *password) {
     set_prov(NET_PROV_WIFI_CONNECTING);
     set_link(NET_LINK_CONNECTING);
     esp_timer_start_once(s_trial_timer, (uint64_t)TRIAL_TIMEOUT_MS * 1000);
-    if (was_online) {
-        s_reconnect_after_disconnect = true;
-        if (esp_wifi_disconnect() == ESP_OK) return ESP_OK;
-        s_reconnect_after_disconnect = false;
-    }
-    esp_wifi_connect();
-    return ESP_OK;
+    if (!s_reconnect_after_disconnect) esp_wifi_connect();
+    err = ESP_OK;
+done:
+    xSemaphoreGive(s_config_lock);
+    return err;
 }
 
 int app_net_scan_results(char ssids[][33], int max) {
@@ -358,10 +479,16 @@ static void scan_networks(void) {
 }
 
 esp_err_t app_net_provision_start(void) {
-    if (s_prov_active) return ESP_OK;
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    if (s_prov_active || s_trial) {
+        esp_err_t err = s_prov_active ? ESP_OK : ESP_ERR_INVALID_STATE;
+        xSemaphoreGive(s_config_lock);
+        return err;
+    }
     s_prov_active = true;
     set_prov(NET_PROV_STARTING);
     esp_timer_stop(s_retry_timer);
+    xSemaphoreGive(s_config_lock);
 
     // 未联网时 STA 可能正处于连接尝试中,扫描会失败:先停下来。
     if (s_st.link != NET_LINK_ONLINE) esp_wifi_disconnect();
@@ -387,7 +514,7 @@ esp_err_t app_net_provision_start(void) {
     if (err == ESP_OK) err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (err == ESP_OK) err = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &ap);
-    esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+    // Both AP and STA configuration stay in RAM; profiles are stored separately.
     if (err == ESP_OK) err = app_portal_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "配网热点启动失败: %s", esp_err_to_name(err));
@@ -402,6 +529,7 @@ esp_err_t app_net_provision_start(void) {
 
 void app_net_provision_stop(void) {
     app_portal_stop();
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
     if (s_trial) trial_fail("cancelled");
     esp_wifi_set_mode(WIFI_MODE_STA);
     bool was_active = s_prov_active;
@@ -411,4 +539,5 @@ void app_net_provision_stop(void) {
     xSemaphoreGive(s_lock);
     if (was_active) set_prov(NET_PROV_OFF);
     if (s_st.link != NET_LINK_ONLINE && s_st.link != NET_LINK_CONNECTING) connect_now();
+    xSemaphoreGive(s_config_lock);
 }

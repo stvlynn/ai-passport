@@ -76,9 +76,20 @@ PR 时进入审阅状态。
 3. 在设备上：设备页 → 网页配网，长按 OK。设备会开启名为 `AstraMonitor-XXXX`
    的 WPA2 热点，密码为随机 8 位数字，并以 Wi-Fi 二维码显示。
 4. 用手机相机扫码，或手动连接该热点。配网网页通常会自动弹出；否则用浏览器打开
-   `http://192.168.4.1`。选择 2.4 GHz 网络，填写密码，粘贴 token 后提交。
+   `http://192.168.4.1`。先在“服务设置”中保存 token，再在“添加或更新 Wi-Fi”中
+   选择 2.4 GHz 网络，填写密码后保存并连接。两张表单独立，添加 Wi-Fi 无需填写服务配置。
 5. 设备会先试连新的 Wi-Fi。连上后热点自动关闭并开始第一次同步；约 20 秒内连不上
    则恢复原来的 Wi-Fi，可在网页上重新提交。
+
+配网网页最多列出 5 个已保存的 Wi-Fi，提供连接和删除按钮。重新打开网页配网即可继续添加网络。
+试连成功后新增或更新该网络，不删除其它配置；试连或存储写入失败时保留旧列表。
+重启优先连接最近保存的网络，连接失败后按退避间隔轮换尝试已保存的网络。
+保留 NVS 升级时会自动迁移旧版的单组 Wi-Fi 配置。
+设备菜单中的“清除 Wi-Fi”和串口 `wifi clear` 会删除全部网络；列表已满时需先删除一个再添加。
+
+连接已保存网络无需输入密码。更新同名网络时密码留空保留原值；新网络密码留空表示开放网络。
+已有加密网络如需改为开放网络，请先删除再添加。网页不会回显已保存的密码或 token。
+Connector URL 和 Bot ID 自动回填，服务字段留空保留原值；只保存服务设置不会重新连接 Wi-Fi。
 
 配网网页还会显示本机的 Wi-Fi MAC 地址，可用于路由器白名单或 DHCP 静态分配；
 串口 `status` 命令也会打印它。FoloToy 配网小程序只接入官方固件，因此本应用参照
@@ -116,7 +127,9 @@ fine-grained token 读不到"谁点了星标"：GitHub 会拒绝 `stargazers` �
 - `tools/ui_preview/run.sh`：在电脑上用真实的 `main/ui.c` 和 LVGL 渲染所有页面，
   输出到 `build/ui_preview/`。
 - 宿主测试：`tests/test_gh_model.c`、`tests/test_gh_parse.c`、
-  `tests/test_app_nav.c`、`tests/test_sound_synth.c`、`tests/test_portal_proto.c`，由
+  `tests/test_app_nav.c`、`tests/test_sound_synth.c`、`tests/test_portal_proto.c`、
+  `tests/test_wifi_profiles.c`、`tests/test_app_net_profiles.c`、`tests/test_app_portal.c` 和
+  `tests/test_app_settings_wifi.c`，由
   `./tools/validate.sh --static` 运行。
 
 基线硬件测试演示源码（`main/main.c`、`main/demo_*.c`、`main/ui_pixel*`）仍留在

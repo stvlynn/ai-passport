@@ -10,7 +10,8 @@ void app_grok_set_active(bool active);
 // Push-to-talk: down starts recording at once (connection is made in parallel),
 // up ends the utterance and sends it. Returns false when busy or out of memory.
 bool app_grok_ptt_down(void);
-void app_grok_ptt_up(void);
+// cancel: the press was a tap (used for paging); drop the audio without a status.
+bool app_grok_ptt_up(bool cancel);   // true if a recording was running
 // Serialize TLS with GitHub sync on this no-PSRAM board. Worker tasks only.
 void app_grok_network_lock(void);
 void app_grok_network_unlock(void);

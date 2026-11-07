@@ -4,6 +4,7 @@ idf_component_register(
     SRCS "app_main.c"
          "app_nav.c"
          "app_net.c"
+         "wifi_profiles.c"
          "app_portal.c"
          "portal_proto.c"
          "app_settings.c"

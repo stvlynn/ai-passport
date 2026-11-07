@@ -85,3 +85,5 @@ void ui_set_idle(const ui_model_t *m);
 
 // Persistent, scrolling connector reply; independent from idle action captions.
 void ui_lynn_bot_text(const char *text);
+// Show the next three-line page of the bubble (wraps). False if it fits one page.
+bool ui_lynn_page_next(void);

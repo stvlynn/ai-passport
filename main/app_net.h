@@ -3,10 +3,11 @@
 // Wi-Fi 常驻:有凭据就自动连接并按指数退避重连。配网时切到 APSTA:设备开一个
 // WPA2 热点(随机 8 位密码,屏幕上以二维码展示),手机连上后由 app_portal 提供
 // 网页表单。新凭据先试连,连上才算数;失败则恢复原来的凭据,不会把设备"配丢"。
-// 凭据由 esp_wifi 存在 NVS(WIFI_STORAGE_FLASH);日志里从不打印密码。
+// 最多保存 5 组凭据到应用 NVS;断线轮换重试,日志和网页不回显密码。
 #pragma once
 
 #include "esp_err.h"
+#include "wifi_profiles.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -52,6 +53,11 @@ net_status_t app_net_status(void);
 esp_err_t app_net_set_credentials(const char *ssid, const char *password);
 esp_err_t app_net_clear_credentials(void);
 
+// 已保存网络名(不返回密码),以及删除一组凭据。
+int app_net_saved_networks(char ssids[][33], int max);
+esp_err_t app_net_forget_network(const char *ssid);
+
+// 空密码保留同名已存密码;新网络空密码表示开放网络。
 // 试连一组新凭据:成功后保留;失败(约 20 秒内连不上)则恢复之前的凭据。
 // 可在 HTTP 服务任务里调用,不阻塞。
 esp_err_t app_net_try_credentials(const char *ssid, const char *password);

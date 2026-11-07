@@ -90,11 +90,28 @@ and merges, surprise for issues, reviewing for PRs.
    8-digit password, and shows both as a Wi-Fi QR code.
 4. Scan the QR code with the phone camera, or join the hotspot manually. The
    setup page usually opens on its own; otherwise browse to
-   `http://192.168.4.1`. Pick a 2.4 GHz network, enter its password, paste the
-   token, and submit.
+   `http://192.168.4.1`. Save the token under Service settings. Under Add or
+   update Wi-Fi, pick a 2.4 GHz network, enter its password, and save/connect.
+   These forms are independent; adding Wi-Fi does not require service fields.
 5. The device tries the new Wi-Fi first. If it connects, the hotspot closes
    and the first sync starts. If it fails within about 20 seconds, the device
    restores the previous Wi-Fi and the page can be submitted again.
+
+The setup page lists up to five saved Wi-Fi networks, with connect and delete
+buttons. Reopen web setup to add another network. A successful trial adds or
+updates that network without removing others; a failed trial or storage write
+preserves the old list. Restarting connects to the most recently saved network;
+connection failures rotate through the saved list with backoff. Existing
+single-network credentials migrate automatically when upgrading with NVS intact.
+The device menu's forget-Wi-Fi action and `wifi clear` delete all saved networks.
+When the list is full, delete a network before adding another.
+
+Selecting a saved network reuses its password. When updating the same SSID,
+leaving the password empty preserves its saved password; for a new SSID, an empty
+password means an open network. To change an existing protected network to an
+open one, delete it first. Saved passwords and tokens are never sent back to
+the browser. Connector URL and Bot ID are prefilled; blank service fields keep
+existing values, and service-only saves do not reconnect Wi-Fi.
 
 The setup page also shows the device's Wi-Fi MAC address, for router
 allowlists or DHCP reservations; the console `status` command prints it too.
@@ -144,7 +161,9 @@ and emoji, are drawn as LVGL placeholder boxes.
   `main/ui.c` and LVGL into `build/ui_preview/`.
 - Host tests: `tests/test_gh_model.c`, `tests/test_gh_parse.c`,
   `tests/test_app_nav.c`, `tests/test_sound_synth.c`, and
-  `tests/test_portal_proto.c`, which run in
+  `tests/test_portal_proto.c`, `tests/test_wifi_profiles.c`,
+  `tests/test_app_net_profiles.c`, `tests/test_app_portal.c`, and
+  `tests/test_app_settings_wifi.c`, which run in
   `./tools/validate.sh --static`.
 
 The baseline hardware-test demo sources (`main/main.c`, `main/demo_*.c`, and

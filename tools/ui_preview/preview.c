@@ -143,6 +143,19 @@ int main(int argc, char **argv) {
     ui_lynn_play("pat", NULL);
     pump(1500);
     dump(out, "00-lynn");
+    // Grok replies are capped at 30 characters by the bot: one page.
+    ui_lynn_bot_text("今天北京晴，最高18度，适合出门散步，记得带件外套哦。");
+    pump(100);
+    dump(out, "00b-lynn-reply");
+    if (ui_lynn_page_next()) { fprintf(stderr, "FAIL: a 30-char reply must fit one page\n"); return 1; }
+    // Longer text pages with an OK tap.
+    ui_lynn_bot_text("Connector unreachable. Check that the connector service is running on your server, "
+                     "then hold OK to retry. The device keeps your settings.");
+    pump(100);
+    dump(out, "00c-lynn-page1");
+    if (!ui_lynn_page_next()) { fprintf(stderr, "FAIL: long text must page\n"); return 1; }
+    pump(100);
+    dump(out, "00d-lynn-page2");
     // 回归:在 Lynn 页关屏后唤醒,再触发动作,舞台必须继续走帧(曾经停在关屏前的画面)。
     m.idle = APP_IDLE_OFF;
     ui_set_idle(&m);

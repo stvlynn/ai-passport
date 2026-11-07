@@ -21,10 +21,12 @@ static uint32_t s_generation;
 static app_grok_event_cb_t s_event;
 static app_grok_status_cb_t s_status;
 static uint8_t *s_voice_buf;     // owned by the worker once a voice turn is pending
+static volatile bool s_ptt_cancel;   // released as a tap (page flip): drop quietly
 
 static const char *TAG = "grok";
 #define GROK_TIMEOUT_MS 10000
 #define GROK_POLL_MS 2000
+#define GROK_TAP_WAIT_MS 300
 
 void app_grok_network_lock(void) { xSemaphoreTake(s_network, portMAX_DELAY); }
 void app_grok_network_unlock(void) { xSemaphoreGive(s_network); }
@@ -90,6 +92,15 @@ static bool write_all(esp_http_client_handle_t client, const uint8_t *p, size_t 
 // in parallel and buffered audio is streamed as soon as it is open. The body
 // has a fixed length: VOICE_DATA_BYTES of ADPCM (zero-padded) + sample count.
 static bool upload(const grok_config_t *config, uint32_t generation, uint8_t *buf) {
+    // Give a tap (OK page flip) time to be released before paying for TLS.
+    bool tapped = false;
+    for (int waited = 0; waited < GROK_TAP_WAIT_MS; waited += 20) {
+        bool done = false;
+        (void)app_audio_rec_bytes(&done, NULL);
+        if (done) { tapped = s_ptt_cancel; break; }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (tapped) return true;
     esp_http_client_handle_t client = client_new(config, true, 0);
     if (!client) {
         app_audio_rec_stop();
@@ -108,11 +119,9 @@ static bool upload(const grok_config_t *config, uint32_t generation, uint8_t *bu
         size_t sent = 0;
         bool done = false, wrote = true;
         esp_err_t rec_err = ESP_OK;
-        bool announced = false;
         for (;;) {
             size_t ready = app_audio_rec_bytes(&done, &rec_err);
             if (!current(generation)) { app_audio_rec_stop(); wrote = false; break; }
-            if (!done && !announced) { status(generation, "Listening... release OK to send"); announced = true; }
             if (ready > sent) {
                 if (!write_all(client, buf + sent, ready - sent)) { app_audio_rec_stop(); wrote = false; break; }
                 sent = ready;
@@ -130,7 +139,7 @@ static bool upload(const grok_config_t *config, uint32_t generation, uint8_t *bu
             ESP_LOGW(TAG, "microphone read failed: %s", esp_err_to_name(rec_err));
             status(generation, "Microphone error. Hold OK to retry");
         } else if (wrote && samples < VOICE_MIN_SAMPLES) {
-            status(generation, "Too short. Hold OK while you talk");
+            if (!s_ptt_cancel) status(generation, "Too short. Hold OK while you talk");
         } else if (wrote) {
             status(generation, "Sending...");
             memset(buf + sent, 0, VOICE_DATA_BYTES - sent);
@@ -257,6 +266,7 @@ bool app_grok_ptt_down(void) {
         s_voice_buf = malloc(VOICE_DATA_BYTES);
         ok = s_voice_buf && app_audio_rec_start(s_voice_buf, VOICE_DATA_BYTES);
         if (ok) {
+            s_ptt_cancel = false;
             s_pending = true;
             s_busy = true;
         } else {
@@ -269,6 +279,10 @@ bool app_grok_ptt_down(void) {
     return ok;
 }
 
-void app_grok_ptt_up(void) {
+bool app_grok_ptt_up(bool cancel) {
+    bool done = true;
+    if (cancel) s_ptt_cancel = true;
+    (void)app_audio_rec_bytes(&done, NULL);
     app_audio_rec_stop();
+    return !done;
 }

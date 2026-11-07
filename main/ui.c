@@ -70,7 +70,7 @@ static struct {
     lv_obj_t *info[4];
     row_t menu[UI_MENU_COUNT];
     // Lynn 舞台页
-    lv_obj_t *stage, *stage_line, *stage_cap;
+    lv_obj_t *stage, *stage_line, *stage_cap, *stage_view, *stage_page;
     lv_timer_t *stage_timer;
     bool stage_paused;
     // 配网页
@@ -710,13 +710,17 @@ static void refresh_system(const ui_model_t *m) {
 
 static lynn_stage_t s_stage;
 static bool s_stage_ready;
-static char s_bot_text[GROK_TEXT_MAX] = "Press OK: speak for 5 seconds";
+static char s_bot_text[GROK_TEXT_MAX] = "Hold OK to talk. Tap OK for next page";
+static uint8_t s_bot_page;                  // current page of s_bot_text in the bubble
+#define STAGE_LINE_SPACE 1
+#define STAGE_LINES 3
+#define STAGE_STEP ((int)lv_font_get_line_height(&ui_font_12) + STAGE_LINE_SPACE)
+#define STAGE_PAGE_H (STAGE_LINES * STAGE_STEP - STAGE_LINE_SPACE)
 static uint16_t s_stage_buf[LYNN_STAGE_W * LYNN_STAGE_H];
 static int16_t s_stage_shown = -2;          // 卡片上显示的动作,变化时更新文字
 static uint32_t s_stage_clock;              // 已按真实时间推进到的 tick 起点(ms)
 static lynn_rect_t s_stage_prev;            // 上一帧的内容包围盒(逻辑像素)
 static uint32_t s_fps_window, s_fps_frames, s_fps;
-
 static void stage_sync_idle(void);
 
 static void stage_ensure(void) {
@@ -726,9 +730,23 @@ static void stage_ensure(void) {
     }
 }
 
+static unsigned stage_pages(void) {
+    lv_obj_update_layout(s.stage_line);
+    int lines = (lv_obj_get_height(s.stage_line) + STAGE_LINE_SPACE) / STAGE_STEP;
+    return lines <= STAGE_LINES ? 1 : (unsigned)((lines + STAGE_LINES - 1) / STAGE_LINES);
+}
+
 static void stage_card(void) {
     if (!s.stage_line) return;
-    lv_label_set_text(s.stage_line, s_bot_text);
+    if (strcmp(lv_label_get_text(s.stage_line), s_bot_text)) {
+        lv_label_set_text(s.stage_line, s_bot_text);
+        s_bot_page = 0;
+    }
+    unsigned pages = stage_pages();
+    if (s_bot_page >= pages) s_bot_page = 0;
+    lv_obj_set_y(s.stage_line, -(int)s_bot_page * STAGE_LINES * STAGE_STEP);
+    if (pages > 1) lv_label_set_text_fmt(s.stage_page, "%u/%u", s_bot_page + 1u, pages);
+    else lv_label_set_text(s.stage_page, "");
     const char *kind = s_stage.action < 0 ? "" : lynn_stage_busy(&s_stage) ? "互动 · " : "待机 · ";
     lv_label_set_text_fmt(s.stage_cap, "%s%s", kind, lynn_stage_action_name(&s_stage));
     s_stage_shown = s_stage.action;
@@ -779,12 +797,31 @@ static void stage_tick(lv_timer_t *t) {
     if (s_stage.action != s_stage_shown) stage_card();
 }
 
+// Pixel tail under the bubble, drawn as a narrowing staircase toward the mouth
+// (screen x ~122). Row 0 overwrites the card's bottom border to open the joint.
+static void stage_tail(lv_obj_t *scr, int y) {
+    for (int i = 0; i < 9; i++) {
+        int xl = 112 + i, w = i == 8 ? 2 : 18 - i * 2 + i;   // left edge slants, right edge steps faster
+        w = 18 - i - (i + 1) / 2 * 1;
+        if (w < 2) w = 2;
+        if (i) box(scr, xl, y + i, w, 1, C_INK7);
+        if (w > 2) box(scr, xl + 1, y + i, w - 2, 1, C_CARD);
+    }
+}
+
 static void build_lynn(lv_obj_t *scr) {
     stage_ensure();
-    lv_obj_t *c = card(scr, X0 - 4, 34, XW + 6, 36);
-    s.stage_line = label(c, &ui_font_12, C_INK, 8, 4, XW - 10, "");
-    lv_label_set_long_mode(s.stage_line, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    s.stage_cap = label(c, &ui_font_12, C_MUTED, 8, 19, XW - 10, "");
+    // Speech bubble: up to three wrapped lines, tail pointing down at Lynn's mouth.
+    lv_obj_t *c = card(scr, X0 - 4, 32, XW + 6, 60);
+    // Three-line window; longer text pages with an OK tap (label scrolls inside).
+    s.stage_view = box(c, 8, 4, XW - 10, STAGE_PAGE_H, -1);
+    s.stage_line = label(s.stage_view, &ui_font_12, C_INK, 0, 0, XW - 10, "");
+    lv_label_set_long_mode(s.stage_line, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_height(s.stage_line, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_line_space(s.stage_line, STAGE_LINE_SPACE, 0);
+    s.stage_cap = label(c, &ui_font_12, C_MUTED, 8, 43, XW - 50, "");
+    s.stage_page = label_right(c, &ui_font_12, C_FAINT, XW - 50, 43, 40, "");
+    stage_tail(scr, 32 + 60 - 1);
     s.stage = lv_canvas_create(scr);
     lv_canvas_set_buffer(s.stage, s_stage_buf, LYNN_STAGE_W, LYNN_STAGE_H, LV_COLOR_FORMAT_RGB565);
     lv_obj_set_pos(s.stage, 0, 76);
@@ -826,6 +863,15 @@ bool ui_lynn_play(const char *id, const char *line) {
     } else {
         lynn_stage_play_random(&s_stage);
     }
+    stage_card();
+    return true;
+}
+
+bool ui_lynn_page_next(void) {
+    if (!s.stage_line) return false;
+    unsigned pages = stage_pages();
+    if (pages < 2) return false;
+    s_bot_page = (uint8_t)((s_bot_page + 1) % pages);
     stage_card();
     return true;
 }

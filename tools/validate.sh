@@ -90,6 +90,20 @@ run_static_checks() {
         tests/test_portal_proto.c main/portal_proto.c -o "${test_dir}/test_portal_proto"
     "${test_dir}/test_portal_proto"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_wifi_profiles.c main/wifi_profiles.c -o "${test_dir}/test_wifi_profiles"
+    "${test_dir}/test_wifi_profiles"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/provision_stubs -Imain \
+        tests/test_app_net_profiles.c main/wifi_profiles.c -o "${test_dir}/test_app_net_profiles"
+    "${test_dir}/test_app_net_profiles"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+        -Itests/provision_stubs -Imain tests/test_app_portal.c main/portal_proto.c \
+        "${gc_sections}" -o "${test_dir}/test_app_portal"
+    "${test_dir}/test_app_portal"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+        -Itests/provision_stubs -Imain tests/test_app_settings_wifi.c main/wifi_profiles.c \
+        "${gc_sections}" -o "${test_dir}/test_app_settings_wifi"
+    "${test_dir}/test_app_settings_wifi"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_lynn_anim.c main/lynn_anim.c -o "${test_dir}/test_lynn_anim"
     "${test_dir}/test_lynn_anim"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
@@ -124,7 +138,8 @@ run_static_checks() {
 }
 
 run_firmware_checks() (
-    local validation_build_dir
+    # The subshell already scopes this variable. On macOS Bash 3.2 a local
+    # expires before the EXIT trap runs, which breaks cleanup under set -u.
 
     if ! command -v idf.py >/dev/null 2>&1; then
         echo "ERROR: idf.py is not available; activate ESP-IDF 5.5.3 first." >&2

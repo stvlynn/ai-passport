@@ -44,6 +44,7 @@ static const char *TAG = "astra";
 
 #define DIM_PERCENT        12
 #define TICK_MS            250
+#define PTT_TAP_MS         250    // shorter OK press on the Lynn page = next page
 #define BATTERY_PERIOD_MS  30000
 #define PROV_DONE_LINGER_MS 3000
 #define CONFIRM_WINDOW_MS  3000
@@ -67,6 +68,9 @@ typedef struct {
 static QueueHandle_t s_events;
 static TaskHandle_t s_sync_task;
 static QueueHandle_t s_grok_events;
+static int64_t s_ptt_down_at;     // OK press time while recording (0 = none)
+static int64_t s_ptt_busy_at;     // OK press time while a turn was already in flight
+static bool s_ptt_shown;
 
 // sync → app 的交接区
 static SemaphoreHandle_t s_handoff_lock;
@@ -449,15 +453,40 @@ static void handle_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     // Lynn: hold OK to talk (recording starts on press, sent on release).
     // Clicks are consumed so a talk never also triggers page actions.
     bool lynn_talk = s_nav.page == APP_PAGE_LYNN && s_nav.idle == APP_IDLE_AWAKE;
+    // Recording starts on press (optimistic); a release within PTT_TAP_MS is a
+    // tap that pages the bubble instead, and its audio is dropped.
     if (btn == BSP_BTN_OK && ev == BSP_BTN_PRESS) {
         if (lynn_talk) {
             app_nav_poke(&s_nav, now_ms());
-            on_grok_status(app_grok_ptt_down() ? "Listening... release OK to send" : "Microphone busy. Please wait");
+            s_ptt_down_at = now_ms();
+            s_ptt_shown = false;
+            if (!app_grok_ptt_down()) {
+                s_ptt_down_at = 0;
+                s_ptt_busy_at = now_ms();  // paging still works while a turn is in flight
+            }
         }
         return;
     }
     if (btn == BSP_BTN_OK && ev == BSP_BTN_RELEASE) {
-        app_grok_ptt_up();
+        int64_t t = now_ms();
+        if (s_ptt_busy_at) {
+            bool held = t - s_ptt_busy_at >= PTT_TAP_MS;
+            s_ptt_busy_at = 0;
+            if (held) { on_grok_status("Busy. Wait for Grok, then hold OK"); return; }
+        }
+        bool tap = !s_ptt_down_at || t - s_ptt_down_at < PTT_TAP_MS;
+        bool was_rec = s_ptt_down_at != 0;
+        s_ptt_down_at = 0;
+        if (tap) {
+            if (was_rec) (void)app_grok_ptt_up(true);
+            if (lynn_talk && bsp_lvgl_lock(500)) {
+                (void)ui_lynn_page_next();
+                bsp_lvgl_unlock();
+            }
+            return;
+        }
+        // Feedback right away: the TLS connect may still take a few seconds.
+        if (app_grok_ptt_up(false)) on_grok_status("Sending...");
         return;
     }
     if (lynn_talk && btn == BSP_BTN_OK) {
@@ -514,7 +543,8 @@ static void app_task(void *arg) {
     net_link_t last_link = NET_LINK_NO_CREDENTIALS;
     for (;;) {
         app_event_t ev;
-        if (xQueueReceive(s_events, &ev, pdMS_TO_TICKS(TICK_MS)) == pdTRUE) {
+        TickType_t wait = pdMS_TO_TICKS(s_ptt_down_at && !s_ptt_shown ? 40 : TICK_MS);
+        if (xQueueReceive(s_events, &ev, wait) == pdTRUE) {
             switch (ev.type) {
             case EV_KEY:
                 handle_key((bsp_btn_t)ev.a, (bsp_btn_ev_t)ev.b);
@@ -585,6 +615,10 @@ static void app_task(void *arg) {
         }
 
         int64_t t = now_ms();
+        if (s_ptt_down_at && !s_ptt_shown && t - s_ptt_down_at >= PTT_TAP_MS) {
+            s_ptt_shown = true;            // a real hold, not a page tap
+            on_grok_status("Listening... release OK to send");
+        }
         if (s_provisioning) {
             app_nav_poke(&s_nav, t);
             if (s_prov_done_at && t - s_prov_done_at > PROV_DONE_LINGER_MS) provisioning_exit();

@@ -4,6 +4,7 @@
 
 #include "esp_err.h"
 #include "grok_proto.h"
+#include "wifi_profiles.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -35,3 +36,7 @@ esp_err_t app_settings_set_day_baseline(uint32_t day_key, uint32_t stars);
 // Connector settings, stored only in NVS. Updates must contain all fields.
 bool app_settings_grok(grok_config_t *config);
 esp_err_t app_settings_set_grok(const grok_config_t *config);
+
+// NOT_FOUND distinguishes legacy installations from an intentionally empty list.
+esp_err_t app_settings_wifi(wifi_profiles_t *profiles);
+esp_err_t app_settings_set_wifi(const wifi_profiles_t *profiles);
